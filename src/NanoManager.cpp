@@ -152,6 +152,7 @@ void NanoManager::addNano(CNSocket* sock, int16_t nanoId, int16_t slot) {
     // Update player
     plr->Nanos[nanoId] = resp.Nano;
     plr->level = level;
+    plr->HP = 1000 * plr->level;
 
     sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_NANO_CREATE_SUCC, sizeof(sP_FE2CL_REP_PC_NANO_CREATE_SUCC));
 
@@ -161,7 +162,7 @@ void NanoManager::addNano(CNSocket* sock, int16_t nanoId, int16_t slot) {
      * P_FE2CL_REP_PC_CHANGE_LEVEL appear to play the same animation, but only the latter affects
      * the other player's displayed level.
      */
-    
+
     INITSTRUCT(sP_FE2CL_REP_PC_CHANGE_LEVEL, resp2);
 
     resp2.iPC_ID = plr->iID;
@@ -183,16 +184,17 @@ void NanoManager::summonNano(CNSocket *sock, int slot) {
 
     int nanoId = slot == -1 ? -1 : plr->equippedNanos[slot];
 
-    if (nanoId > 36 || nanoId < 0)
+    if (nanoId > 36 || nanoId < -1)
         return; // sanity check
-
-    sNano nano = plr->Nanos[nanoId];
 
     // Send to other players
     INITSTRUCT(sP_FE2CL_NANO_ACTIVE, pkt1);
 
     pkt1.iPC_ID = plr->iID;
-    pkt1.Nano = nano;
+    if (nanoId == -1)
+        memset(&pkt1.Nano, 0, sizeof(pkt1.Nano));
+    else
+        pkt1.Nano = plr->Nanos[nanoId];
 
     for (CNSocket* s : PlayerManager::players[sock].viewable)
         s->sendPacket((void*)&pkt1, P_FE2CL_NANO_ACTIVE, sizeof(sP_FE2CL_NANO_ACTIVE));

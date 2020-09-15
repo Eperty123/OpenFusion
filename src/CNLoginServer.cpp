@@ -24,15 +24,15 @@ void CNLoginServer::handlePacket(CNSocket* sock, CNPacketData* data) {
             if (data->size != sizeof(sP_CL2LS_REQ_LOGIN))
                 return; // ignore the malformed packet
 
-            sP_CL2LS_REQ_LOGIN* login = (sP_CL2LS_REQ_LOGIN*)data->buf;   
-            //TODO: implement better way of sending credentials
+            sP_CL2LS_REQ_LOGIN* login = (sP_CL2LS_REQ_LOGIN*)data->buf;
+            // TODO: implement better way of sending credentials
             std::string userLogin((char*)login->szCookie_TEGid);
             std::string userPassword((char*)login->szCookie_authid);
 
             /*
-            * Sometimes the client sends garbage cookie data.
-            * Validate it as normal credentials instead of using a length check before falling back.
-            */
+             * Sometimes the client sends garbage cookie data.
+             * Validate it as normal credentials instead of using a length check before falling back.
+             */
             if (!CNLoginServer::isLoginDataGood(userLogin, userPassword)) {
                 /*
                  * The std::string -> char* -> std::string maneuver should remove any
@@ -45,43 +45,43 @@ void CNLoginServer::handlePacket(CNSocket* sock, CNPacketData* data) {
             bool success = false;
             int errorCode = 0;
 
-            //checking regex
+            // checking regex
             if (!CNLoginServer::isLoginDataGood(userLogin, userPassword))
             {
-                errorCode = (int)LOGINERRORID::login_error;
-            }         
-            else 
+                errorCode = (int)LoginError::LOGIN_ERROR;
+            }
+            else
             {
                 std::unique_ptr<Database::Account> findUser = Database::findAccount(userLogin);
-                //if account not found, create it
+                // if account not found, create it
                 if (findUser == nullptr)
                 {
                     loginSessions[sock] = CNLoginData();
                     loginSessions[sock].userID =  Database::addAccount(userLogin, userPassword);
                     loginSessions[sock].slot = 1;
-                    success = true;           
+                    success = true;
                 }
-                //if user exists, check if password is correct
+                // if user exists, check if password is correct
                 else if (CNLoginServer::isPasswordCorrect(findUser->Password, userPassword))
                 {
-                    //check if account isn't currently in use
+                    // check if account isn't currently in use
                     if (CNLoginServer::isAccountInUse(findUser->AccountID) ||
                         PlayerManager::isAccountInUse(findUser->AccountID))
                     {
-                        errorCode = (int)LOGINERRORID::id_already_in_use;
+                        errorCode = (int)LoginError::ID_ALREADY_IN_USE;
                     }
-                    //if not, login success
-                    else 
+                    // if not, login success
+                    else
                     {
                         loginSessions[sock] = CNLoginData();
                         loginSessions[sock].userID = findUser->AccountID;
                         loginSessions[sock].slot = findUser->Selected;
                         success = true;
                     }
-                }                             
+                }
                 else
                 {
-                    errorCode = (int)LOGINERRORID::id_and_password_do_not_match;
+                    errorCode = (int)LoginError::ID_AND_PASSWORD_DO_NOT_MATCH;
                 }
             }
 
@@ -100,15 +100,15 @@ void CNLoginServer::handlePacket(CNSocket* sock, CNPacketData* data) {
                 resp.iPaymentFlag = 1;
                 resp.iOpenBetaFlag = 0;
                 resp.uiSvrTime = getTime();
-                
+
                 // send the resp in with original key
                 sock->sendPacket((void*)&resp, P_LS2CL_REP_LOGIN_SUCC, sizeof(sP_LS2CL_REP_LOGIN_SUCC));
 
                 // update keys
                 sock->setEKey(CNSocketEncryption::createNewKey(resp.uiSvrTime, resp.iCharCount + 1, resp.iSlotNum + 1));
                 sock->setFEKey(CNSocketEncryption::createNewKey((uint64_t)(*(uint64_t*)&CNSocketEncryption::defaultKey[0]), login->iClientVerC, 1));
-      
-                // now send the characters :)        
+
+                // now send the characters :)
                 std::vector<Player>::iterator it;
                 for (it = characters.begin(); it != characters.end(); it++)
                 {
@@ -124,38 +124,30 @@ void CNLoginServer::handlePacket(CNSocket* sock, CNPacketData* data) {
                     charInfo.iY = it->y;
                     charInfo.iZ = it->z;
 
-                    //save character in session (for char select)
+                    // save character in session (for char select)
                     int UID = it->iID;
-                    loginSessions[sock].characters[UID] = Player(*it);                      
+                    loginSessions[sock].characters[UID] = Player(*it);
                     loginSessions[sock].characters[UID].FEKey = sock->getFEKey();
 
-                    //temporary inventory stuff
-                    for (int i = 0; i < 4; i++) {
-                        //equip char creation clothes and lightning rifle
+                    // Equip info
+                    for (int i = 0; i < AEQUIP_COUNT; i++) {
                         charInfo.aEquip[i] = it->Equip[i];
-                    }
-
-                    for (int i = 5; i < AEQUIP_COUNT; i++) {
-                        // empty equips
-                        charInfo.aEquip[i].iID = 0;
-                        charInfo.aEquip[i].iType = 0;
-                        charInfo.aEquip[i].iOpt = 0;
                     }
 
                     // set default to the first character
                     if (it == characters.begin())
                         loginSessions[sock].selectedChar = UID;
 
-                    sock->sendPacket((void*)&charInfo, P_LS2CL_REP_CHAR_INFO, sizeof(sP_LS2CL_REP_CHAR_INFO));            
+                    sock->sendPacket((void*)&charInfo, P_LS2CL_REP_CHAR_INFO, sizeof(sP_LS2CL_REP_CHAR_INFO));
                 }
-            }           
-            //Failure
+            }
+            // Failure
             else {
                 INITSTRUCT(sP_LS2CL_REP_LOGIN_FAIL, resp);
 
                 memcpy(resp.szID, login->szID, sizeof(char16_t) * 33);
                 resp.iErrorCode = errorCode;
-                
+
                 sock->sendPacket((void*)&resp, P_LS2CL_REP_LOGIN_FAIL, sizeof(sP_LS2CL_REP_LOGIN_FAIL));
             }
 
@@ -168,42 +160,46 @@ void CNLoginServer::handlePacket(CNSocket* sock, CNPacketData* data) {
         case P_CL2LS_REQ_CHECK_CHAR_NAME: {
             if (data->size != sizeof(sP_CL2LS_REQ_CHECK_CHAR_NAME))
                 return;
-            
-            // naughty words allowed!!!!!!!! (also for some reason, the client will always show 'Player 0' if you manually type a name. It will show up for other connected players though)
-            sP_CL2LS_REQ_CHECK_CHAR_NAME* nameCheck = (sP_CL2LS_REQ_CHECK_CHAR_NAME*)data->buf;
-            //check if name is occupied
-            if (Database::isNameFree(nameCheck))
-            {
-                // naughty words allowed!!!!!!!! (also for some reason, the client will always show 'Player + ID' if you manually type a name. It will show up for other connected players though)
 
+            sP_CL2LS_REQ_CHECK_CHAR_NAME* nameCheck = (sP_CL2LS_REQ_CHECK_CHAR_NAME*)data->buf;
+            bool success = true;
+            int errorcode = 0;
+
+            // check regex
+            if (!CNLoginServer::isCharacterNameGood(U16toU8(nameCheck->szFirstName), U16toU8(nameCheck->szLastName))) {
+                success = false;
+                errorcode = 4;
+            } else if (!Database::isNameFree(nameCheck)){ // check if name isn't already occupied
+                success = false;
+                errorcode = 1;
+            }
+
+            if (success){
                 INITSTRUCT(sP_LS2CL_REP_CHECK_CHAR_NAME_SUCC, resp);
 
                 DEBUGLOG(
-                std::cout << "P_CL2LS_REQ_CHECK_CHAR_NAME:" << std::endl;
-                std::cout << "\tFirstName: " << U16toU8(nameCheck->szFirstName) << " LastName: " << U16toU8(nameCheck->szLastName) << std::endl;
+                    std::cout << "P_CL2LS_REQ_CHECK_CHAR_NAME:" << std::endl;
+                    std::cout << "\tFirstName: " << U16toU8(nameCheck->szFirstName) << " LastName: " << U16toU8(nameCheck->szLastName) << std::endl;
                 )
 
                 memcpy(resp.szFirstName, nameCheck->szFirstName, sizeof(char16_t) * 9);
                 memcpy(resp.szLastName, nameCheck->szLastName, sizeof(char16_t) * 17);
-                
-                // fr*ck allowed!!!
+
                 sock->sendPacket((void*)&resp, P_LS2CL_REP_CHECK_CHAR_NAME_SUCC, sizeof(sP_LS2CL_REP_CHECK_CHAR_NAME_SUCC));
-            }
-            else {
+            } else {
                 INITSTRUCT(sP_LS2CL_REP_CHECK_CHAR_NAME_FAIL, resp);
-                resp.iErrorCode = 1;
+                resp.iErrorCode = errorcode;
                 sock->sendPacket((void*)&resp, P_LS2CL_REP_CHECK_CHAR_NAME_FAIL, sizeof(sP_LS2CL_REP_CHECK_CHAR_NAME_FAIL));
             }
             break;
-
         }
         case P_CL2LS_REQ_SAVE_CHAR_NAME: {
             if (data->size != sizeof(sP_CL2LS_REQ_SAVE_CHAR_NAME))
                 return;
-            
+
             sP_CL2LS_REQ_SAVE_CHAR_NAME* save = (sP_CL2LS_REQ_SAVE_CHAR_NAME*)data->buf;
             INITSTRUCT(sP_LS2CL_REP_SAVE_CHAR_NAME_SUCC, resp);
-            
+
             DEBUGLOG(
                 std::cout << "P_CL2LS_REQ_SAVE_CHAR_NAME:" << std::endl;
                 std::cout << "\tSlot: " << (int)save->iSlotNum << std::endl;
@@ -224,7 +220,7 @@ void CNLoginServer::handlePacket(CNSocket* sock, CNPacketData* data) {
         case P_CL2LS_REQ_CHAR_CREATE: {
             if (data->size != sizeof(sP_CL2LS_REQ_CHAR_CREATE))
                 return;
-            
+
             sP_CL2LS_REQ_CHAR_CREATE* character = (sP_CL2LS_REQ_CHAR_CREATE*)data->buf;
             Database::finishCharacter(character);
 
@@ -245,12 +241,9 @@ void CNLoginServer::handlePacket(CNSocket* sock, CNPacketData* data) {
                 std::cout << "\tiEquipUBID: " << (int)character->sOn_Item.iEquipUBID << std::endl;
                 std::cout << "\tiEquipLBID: " << (int)character->sOn_Item.iEquipLBID << std::endl;
                 std::cout << "\tiEquipFootID: " << (int)character->sOn_Item.iEquipFootID << std::endl;
-            )
-            
-            Player player =
-            Database::DbToPlayer(
-                Database::getDbPlayerById(character->PCStyle.iPC_UID)
-            );
+                )
+
+            Player player = Database::getPlayer(character->PCStyle.iPC_UID);
             int64_t UID = player.iID;
 
             INITSTRUCT(sP_LS2CL_REP_CHAR_CREATE_SUCC, resp);
@@ -259,10 +252,10 @@ void CNLoginServer::handlePacket(CNSocket* sock, CNPacketData* data) {
             resp.iLevel = player.level;
             resp.sOn_Item = character->sOn_Item;
 
-            //save player in session
+            // save player in session
             loginSessions[sock].characters[UID] = Player(player);
             loginSessions[sock].characters[UID].FEKey = sock->getFEKey();
-              
+
             sock->sendPacket((void*)&resp, P_LS2CL_REP_CHAR_CREATE_SUCC, sizeof(sP_LS2CL_REP_CHAR_CREATE_SUCC));
             Database::updateSelected(loginSessions[sock].userID, player.slot);
             break;
@@ -272,8 +265,8 @@ void CNLoginServer::handlePacket(CNSocket* sock, CNPacketData* data) {
                 return;
 
             sP_CL2LS_REQ_CHAR_DELETE* del = (sP_CL2LS_REQ_CHAR_DELETE*)data->buf;
-            int operationResult = Database::deleteCharacter(del->iPC_UID);
-            
+            int operationResult = Database::deleteCharacter(del->iPC_UID, loginSessions[sock].userID);
+
             INITSTRUCT(sP_LS2CL_REP_CHAR_DELETE_SUCC, resp);
             resp.iSlotNum = operationResult;
             sock->sendPacket((void*)&resp, P_LS2CL_REP_CHAR_DELETE_SUCC, sizeof(sP_LS2CL_REP_CHAR_DELETE_SUCC));
@@ -283,7 +276,7 @@ void CNLoginServer::handlePacket(CNSocket* sock, CNPacketData* data) {
         case P_CL2LS_REQ_CHAR_SELECT: {
             if (data->size != sizeof(sP_CL2LS_REQ_CHAR_SELECT))
                 return;
-            
+
             // character selected
             sP_CL2LS_REQ_CHAR_SELECT* chararacter = (sP_CL2LS_REQ_CHAR_SELECT*)data->buf;
             INITSTRUCT(sP_LS2CL_REP_CHAR_SELECT_SUCC, resp);
@@ -292,7 +285,6 @@ void CNLoginServer::handlePacket(CNSocket* sock, CNPacketData* data) {
                 std::cout << "P_CL2LS_REQ_CHAR_SELECT:" << std::endl;
                 std::cout << "\tPC_UID: " << chararacter->iPC_UID << std::endl;
             )
-
             loginSessions[sock].selectedChar = chararacter->iPC_UID;
             Database::updateSelected(loginSessions[sock].userID, loginSessions[sock].characters[chararacter->iPC_UID].slot);
             sock->sendPacket((void*)&resp, P_LS2CL_REP_CHAR_SELECT_SUCC, sizeof(sP_LS2CL_REP_CHAR_SELECT_SUCC));
@@ -301,7 +293,7 @@ void CNLoginServer::handlePacket(CNSocket* sock, CNPacketData* data) {
         case P_CL2LS_REQ_SHARD_SELECT: {
             if (data->size != sizeof(sP_CL2LS_REQ_SHARD_SELECT))
                 return;
-            
+
             // tell client to connect to the shard server
             sP_CL2LS_REQ_SHARD_SELECT* shard = (sP_CL2LS_REQ_SHARD_SELECT*)data->buf;
             INITSTRUCT(sP_LS2CL_REP_SHARD_SELECT_SUCC, resp);
@@ -330,11 +322,11 @@ void CNLoginServer::handlePacket(CNSocket* sock, CNPacketData* data) {
                 return;
             sP_CL2LS_REQ_SAVE_CHAR_TUTOR* save = (sP_CL2LS_REQ_SAVE_CHAR_TUTOR*)data->buf;
             Database::finishTutorial(save->iPC_UID);
-            loginSessions[sock].characters[save->iPC_UID].PCStyle2.iTutorialFlag = 1;
-            loginSessions[sock].characters[save->iPC_UID].Equip[0].iID = 328;
-            loginSessions[sock].characters[save->iPC_UID].Equip[0].iType = 0;
-            loginSessions[sock].characters[save->iPC_UID].Equip[0].iOpt = 1;
-
+            // update character in session
+            auto key = loginSessions[sock].characters[save->iPC_UID].FEKey;
+            loginSessions[sock].characters[save->iPC_UID] = Player(Database::getPlayer(save->iPC_UID));
+            loginSessions[sock].characters[save->iPC_UID].FEKey = key;
+            // no response here
             break;
         }
         case P_CL2LS_REQ_CHANGE_CHAR_NAME: {
@@ -361,8 +353,8 @@ void CNLoginServer::handlePacket(CNSocket* sock, CNPacketData* data) {
 
             int accountId = account->AccountID;
             if (!exitDuplicate(accountId))
-                PlayerManager::exitDuplicate(accountId);  
-                         
+                PlayerManager::exitDuplicate(accountId);
+
             break;
         }
         default:
@@ -395,8 +387,8 @@ bool CNLoginServer::isAccountInUse(int accountId) {
     }
     return false;
 }
-bool CNLoginServer::exitDuplicate(int accountId) 
-{
+
+bool CNLoginServer::exitDuplicate(int accountId) {
     std::map<CNSocket*, CNLoginData>::iterator it;
     for (it = CNLoginServer::loginSessions.begin(); it != CNLoginServer::loginSessions.end(); it++)
     {
@@ -412,14 +404,20 @@ bool CNLoginServer::exitDuplicate(int accountId)
     }
     return false;
 }
-bool CNLoginServer::isLoginDataGood(std::string login, std::string password)
-{
+
+bool CNLoginServer::isLoginDataGood(std::string login, std::string password) {
     std::regex loginRegex("[a-zA-Z0-9_-]{4,32}");
     std::regex passwordRegex("[a-zA-Z0-9!@#$%^&*()_+]{8,32}");
     return (std::regex_match(login, loginRegex) && std::regex_match(password, passwordRegex));
 }
-bool CNLoginServer::isPasswordCorrect(std::string actualPassword, std::string tryPassword)
-{
+
+bool CNLoginServer::isPasswordCorrect(std::string actualPassword, std::string tryPassword) {
     return BCrypt::validatePassword(tryPassword, actualPassword);
+}
+
+bool CNLoginServer::isCharacterNameGood(std::string Firstname, std::string Lastname) {
+    std::regex firstnamecheck("[a-zA-Z0-9]+(?: [a-zA-Z0-9]+)*$");
+    std::regex lastnamecheck("[a-zA-Z0-9]+(?: [a-zA-Z0-9]+)*$");
+    return (std::regex_match(Firstname, firstnamecheck) && std::regex_match(Lastname, lastnamecheck));
 }
 #pragma endregion helperMethods

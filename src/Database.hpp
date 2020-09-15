@@ -5,7 +5,7 @@
 #include <vector>
 
 namespace Database {
-#pragma region DatabaseStructs    
+#pragma region DatabaseStructs
 
     struct Account
     {
@@ -16,7 +16,18 @@ namespace Database {
     };
     struct Inventory
     {
-        int AccountID;
+        int playerId;
+        int slot;
+        int16_t Type;
+        int16_t id;
+        int32_t Opt;
+        int32_t TimeLimit;
+    };
+    struct Nano {
+        int playerId;
+        int16_t iID;
+        int16_t iSkillID;
+        int16_t iStamina;
     };
     struct DbPlayer
     {
@@ -25,14 +36,13 @@ namespace Database {
         short int slot;
         std::string FirstName;
         std::string LastName;
+        short int Level;
+        int Nano1;
+        int Nano2;
+        int Nano3;
         short int AppearanceFlag;
         short int Body;
         short int Class;
-        short int EquipFoot;
-        short int EquipLB;
-        short int EquipUB;
-        short int EquipWeapon1;
-        short int EquipWeapon2;
         short int EyeColor;
         short int FaceStyle;
         short int Gender;
@@ -40,7 +50,6 @@ namespace Database {
         short int HairColor;
         short int HairStyle;
         short int Height;
-        short int Level;
         short int NameCheck;
         short int PayZoneFlag;
         short int SkinColor;
@@ -51,41 +60,51 @@ namespace Database {
         int x_coordinates;
         int y_coordinates;
         int z_coordinates;
+        int angle;
+        short int PCState;
+        std::vector<char> QuestFlag;
     };
 
-    
+
 
 #pragma endregion DatabaseStructs
 
-    //handles migrations
+    // handles migrations
     void open();
-    //returns ID
+    // returns ID
     int addAccount(std::string login, std::string password);
     void updateSelected(int accountId, int playerId);
     std::unique_ptr<Account> findAccount(std::string login);
     bool isNameFree(sP_CL2LS_REQ_CHECK_CHAR_NAME* nameCheck);
-    //called after chosing name, returns ID
+    // called after chosing name, returns ID
     int createCharacter(sP_CL2LS_REQ_SAVE_CHAR_NAME* save, int AccountID);
-    //called after finishing creation
+    // called after finishing creation
     void finishCharacter(sP_CL2LS_REQ_CHAR_CREATE* character);
-    //called after tutorial
+    // called after tutorial
     void finishTutorial(int PlayerID);
-    //returns slot number
-    int deleteCharacter(int characterID);
+    // returns slot number
+    int deleteCharacter(int characterID, int userID);
     std::vector <Player> getCharacters(int userID);
-    //accepting/declining custom name
-    enum class CUSTOMNAME {
-        approve = 1,
-        disapprove = 2
+    // accepting/declining custom name
+    enum class CustomName {
+        APPROVE = 1,
+        DISAPPROVE = 2
     };
-    void evaluateCustomName(int characterID, CUSTOMNAME decision);
+    void evaluateCustomName(int characterID, CustomName decision);
     void changeName(sP_CL2LS_REQ_CHANGE_CHAR_NAME* save);
 
-    //parsing DbPlayer
-    DbPlayer playerToDb(Player player);
+    // parsing DbPlayer
+    DbPlayer playerToDb(Player *player);
     Player DbToPlayer(DbPlayer player);
 
-    //getting players
+    // getting players
     DbPlayer getDbPlayerById(int id);
+    Player getPlayer(int id);
 
+    void updatePlayer(Player *player);
+    void updateInventory(Player *player);
+    void updateNanos(Player *player);
+
+    void getInventory(Player* player);
+    void getNanos(Player* player);
 }
