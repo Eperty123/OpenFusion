@@ -30,20 +30,18 @@ CSRC=\
 
 CXXSRC=\
 	src/ChatManager.cpp\
-	src/CombatManager.cpp\
 	src/CNLoginServer.cpp\
 	src/CNProtocol.cpp\
 	src/CNShardServer.cpp\
 	src/CNShared.cpp\
-	src/CNStructs.cpp\
 	src/Database.cpp\
 	src/Defines.cpp\
 	src/main.cpp\
 	src/MissionManager.cpp\
+	src/MobManager.cpp\
 	src/NanoManager.cpp\
 	src/ItemManager.cpp\
 	src/NPCManager.cpp\
-	src/Player.cpp\
 	src/PlayerManager.cpp\
 	src/settings.cpp\
 	src/TransportManager.cpp\
@@ -64,7 +62,6 @@ CXXHDR=\
 	src/contrib/INIReader.hpp\
 	src/contrib/JSON.hpp\
 	src/ChatManager.hpp\
-	src/CombatManager.hpp\
 	src/CNLoginServer.hpp\
 	src/CNProtocol.hpp\
 	src/CNShardServer.hpp\
@@ -75,6 +72,7 @@ CXXHDR=\
 	src/contrib/INIReader.hpp\
 	src/contrib/JSON.hpp\
 	src/MissionManager.hpp\
+	src/MobManager.hpp\
 	src/NanoManager.hpp\
 	src/ItemManager.hpp\
 	src/NPCManager.hpp\
@@ -107,6 +105,8 @@ ifneq ($(shell $(WIN_CXX) --version | head -1 | egrep -o [0-9]+ | tail -3 | head
 WIN_CXX_OPT_DISABLES=$(WIN_CXX_VANILLA_MINGW_OPT_DISABLES)
 endif
 
+CXXFLAGS+= -DGIT_VERSION=\"$(shell git describe --tags)\"
+
 .SUFFIX: .o .c .cpp .h .hpp
 
 .c.o:
@@ -122,13 +122,19 @@ $(SERVER): $(OBJ) $(CHDR) $(CXXHDR)
 	mkdir -p bin
 	$(CXX) $(OBJ) $(LDFLAGS) -o $(SERVER)
 
+# compatibility with how cmake injects GIT_VERSION
+version.h:
+	touch version.h
+
+src/main.o: version.h
+
 .PHONY: all windows clean nuke
 
 # only gets rid of OpenFusion objects, so we don't need to
 # recompile the libs every time
 clean:
-	rm -f src/*.o $(SERVER) $(WIN_SERVER)
+	rm -f src/*.o $(SERVER) $(WIN_SERVER) version.h
 
 # gets rid of all compiled objects, including the libraries
 nuke:
-	rm -f $(OBJ) $(SERVER) $(WIN_SERVER)
+	rm -f $(OBJ) $(SERVER) $(WIN_SERVER) version.h
