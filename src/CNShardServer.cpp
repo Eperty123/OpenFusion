@@ -2,6 +2,7 @@
 #include "CNStructs.hpp"
 #include "CNShardServer.hpp"
 #include "PlayerManager.hpp"
+#include "MobManager.hpp"
 #include "CNShared.hpp"
 #include "settings.hpp"
 #include "Database.hpp"
@@ -33,9 +34,7 @@ void CNShardServer::handlePacket(CNSocket* sock, CNPacketData* data) {
 }
 
 void CNShardServer::keepAliveTimer(CNServer* serv, time_t currTime) {
-    auto cachedPlayers = PlayerManager::players;
-
-    for (auto& pair : cachedPlayers) {
+    for (auto& pair : PlayerManager::players) {
         if (pair.second.lastHeartbeat != 0 && currTime - pair.second.lastHeartbeat > settings::TIMEOUT) {
             // if the client hasn't responded in 60 seconds, its a dead connection so throw it out
             pair.first->kill();
@@ -48,9 +47,8 @@ void CNShardServer::keepAliveTimer(CNServer* serv, time_t currTime) {
 }
 
 void CNShardServer::periodicSaveTimer(CNServer* serv, time_t currTime) {
-    auto cachedPlayers = PlayerManager::players;
-
-    for (auto& pair : cachedPlayers) {
+    std::cout << "players size: " << PlayerManager::players.size() << std::endl;
+    for (auto& pair : PlayerManager::players) {
         Database::updatePlayer(pair.second.plr);
     }
 }
@@ -64,13 +62,13 @@ void CNShardServer::killConnection(CNSocket* cns) {
     if (PlayerManager::players.find(cns) == PlayerManager::players.end())
         return;
 
+    int64_t key = PlayerManager::getPlayer(cns)->SerialKey;
+    
     // save player to DB
     Database::updatePlayer(PlayerManager::players[cns].plr);
-
-    // remove from CNSharedData
-    int64_t key = PlayerManager::getPlayer(cns)->SerialKey;
     PlayerManager::removePlayer(cns);
 
+    // remove from CNSharedData
     CNSharedData::erasePlayer(key);
 }
 
@@ -90,4 +88,6 @@ void CNShardServer::onStep() {
             event.scheduledEvent = currTime + event.delta;
         }
     }
+
+    MobManager::step(currTime);
 }

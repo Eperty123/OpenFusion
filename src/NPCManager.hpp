@@ -15,10 +15,13 @@ struct WarpLocation {
 };
 
 namespace NPCManager {
-    extern std::map<int32_t, BaseNPC> NPCs;
+    extern std::map<int32_t, BaseNPC*> NPCs;
     extern std::map<int32_t, WarpLocation> Warps;
     extern std::vector<WarpLocation> RespawnPoints;
     void init();
+
+    void addNPC(std::vector<Chunk*> viewableChunks, int32_t);
+    void removeNPC(std::vector<Chunk*> viewableChunks, int32_t);
 
     void npcBarkHandler(CNSocket* sock, CNPacketData* data);
     void npcSummonHandler(CNSocket* sock, CNPacketData* data);
@@ -30,6 +33,4 @@ namespace NPCManager {
     void npcVendorSell(CNSocket* sock, CNPacketData* data);
     void npcVendorBuyback(CNSocket* sock, CNPacketData* data);
     void npcVendorBuyBattery(CNSocket* sock, CNPacketData* data);
-
-    void updatePlayerNPCS(CNSocket* sock, PlayerView& plr);
 }
