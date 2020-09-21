@@ -15,9 +15,11 @@ std::map<int32_t, BaseNPC*> NPCManager::NPCs;
 std::map<int32_t, WarpLocation> NPCManager::Warps;
 std::vector<WarpLocation> NPCManager::RespawnPoints;
 
+
 void NPCManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_WARP_USE_NPC, npcWarpHandler);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_NPC_SUMMON, npcSummonHandler);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_NPC_UNSUMMON, npcUnsummonHandler);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_BARKER, npcBarkHandler);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_VENDOR_START, npcVendorStart);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_VENDOR_TABLE_UPDATE, npcVendorTable);
@@ -25,6 +27,7 @@ void NPCManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_VENDOR_ITEM_SELL, npcVendorSell);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_VENDOR_ITEM_RESTORE_BUY, npcVendorBuyback);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_VENDOR_BATTERY_BUY, npcVendorBuyBattery);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_ITEM_COMBINATION, npcCombineItems);
 }
 
 void NPCManager::addNPC(std::vector<Chunk*> viewableChunks, int32_t id) {
@@ -42,17 +45,48 @@ void NPCManager::addNPC(std::vector<Chunk*> viewableChunks, int32_t id) {
     }
 }
 
-void NPCManager::removeNPC(std::vector<Chunk*> viewableChunks, int32_t id) {
+void NPCManager::removeNPC(int32_t id) {
+    // sanity check
+    if (NPCs.find(id) == NPCs.end()) {
+        std::cout << "npc not found : " << id << std::endl;
+        return;
+    }
+
+    BaseNPC* entity = NPCs[id];
+
+    std::pair<int, int> pos = ChunkManager::grabChunk(entity->appearanceData.iX, entity->appearanceData.iY);
+
+    // sanity check
+    if (ChunkManager::chunks.find(pos) == ChunkManager::chunks.end()) {
+        std::cout << "chunk not found!" << std::endl;
+        return;
+    }
+
+    // remove NPC from the chunk
+    Chunk* chunk = ChunkManager::chunks[pos];
+    chunk->NPCs.erase(id);
+    
     // create struct
     INITSTRUCT(sP_FE2CL_NPC_EXIT, exitData);
     exitData.iNPC_ID = id;
 
-    for (Chunk* chunk : viewableChunks) {
+    // remove it from the clients
+    for (Chunk* chunk : ChunkManager::grabChunks(pos.first, pos.second)) {
         for (CNSocket* sock : chunk->players) {
             // send to socket
             sock->sendPacket((void*)&exitData, P_FE2CL_NPC_EXIT, sizeof(sP_FE2CL_NPC_EXIT));
         }
     }
+
+    // remove from mob list if it's a mob
+    if (MobManager::Mobs.find(id) != MobManager::Mobs.end())
+        MobManager::Mobs.erase(id);
+
+    // finally, remove it from the map and free it
+    NPCs.erase(id);
+    delete entity;
+
+    std::cout << "npc removed!" << std::endl;
 }
 
 void NPCManager::npcVendorBuy(CNSocket* sock, CNPacketData* data) {
@@ -279,7 +313,107 @@ void NPCManager::npcVendorBuyBattery(CNSocket* sock, CNPacketData* data) {
     sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_VENDOR_BATTERY_BUY_SUCC, sizeof(sP_FE2CL_REP_PC_VENDOR_BATTERY_BUY_SUCC));
 }
 
+void NPCManager::npcCombineItems(CNSocket* sock, CNPacketData* data) {
+    if (data->size != sizeof(sP_CL2FE_REQ_PC_ITEM_COMBINATION))
+        return; // malformed packet
+
+    sP_CL2FE_REQ_PC_ITEM_COMBINATION* req = (sP_CL2FE_REQ_PC_ITEM_COMBINATION*)data->buf;
+    Player* plr = PlayerManager::getPlayer(sock);
+    
+    if (req->iCostumeItemSlot < 0 || req->iCostumeItemSlot >= AINVEN_COUNT || req->iStatItemSlot < 0 || req->iStatItemSlot >= AINVEN_COUNT) { // sanity check 1
+        INITSTRUCT(sP_FE2CL_REP_PC_ITEM_COMBINATION_FAIL, failResp);
+        failResp.iCostumeItemSlot = req->iCostumeItemSlot;
+        failResp.iStatItemSlot = req->iStatItemSlot;
+        failResp.iErrorCode = 0;
+        sock->sendPacket((void*)&failResp, P_FE2CL_REP_PC_ITEM_COMBINATION_FAIL, sizeof(sP_FE2CL_REP_PC_ITEM_COMBINATION_FAIL));
+        std::cout << "[WARN] Inventory slot(s) out of range (" << req->iStatItemSlot << " and " << req->iCostumeItemSlot << ")" << std::endl;
+        return;
+    }
+
+    sItemBase* itemStats = &plr->Inven[req->iStatItemSlot];
+    sItemBase* itemLooks = &plr->Inven[req->iCostumeItemSlot];
+    Item* itemStatsDat = ItemManager::getItemData(itemStats->iID, itemStats->iType);
+    Item* itemLooksDat = ItemManager::getItemData(itemLooks->iID, itemLooks->iType);
+
+    if (itemStatsDat == nullptr || itemLooksDat == nullptr
+        || ItemManager::CrocPotTable.find(abs(itemStatsDat->level - itemLooksDat->level)) == ItemManager::CrocPotTable.end()) // sanity check 2
+    {
+        INITSTRUCT(sP_FE2CL_REP_PC_ITEM_COMBINATION_FAIL, failResp);
+        failResp.iCostumeItemSlot = req->iCostumeItemSlot;
+        failResp.iStatItemSlot = req->iStatItemSlot;
+        failResp.iErrorCode = 0;
+        std::cout << "[WARN] Either item ids or croc pot value set not found" << std::endl;
+        sock->sendPacket((void*)&failResp, P_FE2CL_REP_PC_ITEM_COMBINATION_FAIL, sizeof(sP_FE2CL_REP_PC_ITEM_COMBINATION_FAIL));
+        return;
+    }
+
+    CrocPotEntry* recipe = &ItemManager::CrocPotTable[abs(itemStatsDat->level - itemLooksDat->level)];
+    int cost = itemStatsDat->buyPrice * recipe->multStats + itemLooksDat->buyPrice * recipe->multLooks;
+    float successChance = recipe->base / 100.0f; // base success chance
+
+    // rarity gap multiplier
+    switch(abs(itemStatsDat->rarity - itemLooksDat->rarity))
+    {
+    case 0:
+        successChance *= recipe->rd0;
+        break;
+    case 1:
+        successChance *= recipe->rd1;
+        break;
+    case 2:
+        successChance *= recipe->rd2;
+        break;
+    case 3:
+        successChance *= recipe->rd3;
+        break;
+    default:
+        break;
+    }
+
+    float rolled = (rand() * 1.0f / RAND_MAX) * 100.0f; // success chance out of 100
+    //std::cout << rolled << " vs " << successChance << std::endl;
+    plr->money -= cost;
+
+
+    INITSTRUCT(sP_FE2CL_REP_PC_ITEM_COMBINATION_SUCC, resp);
+    if (rolled < successChance) {
+        // success
+        resp.iSuccessFlag = 1;
+
+        // modify the looks item with the new stats and set the appearance through iOpt
+        itemLooks->iOpt = (int32_t)itemLooks->iID << 16;
+        itemLooks->iID = itemStats->iID;
+
+        // delete stats item
+        itemStats->iID = 0;
+        itemStats->iOpt = 0;
+        itemStats->iTimeLimit = 0;
+        itemStats->iType = 0;
+    }
+    else {
+        // failure; don't do anything?
+        resp.iSuccessFlag = 0;
+    }
+    resp.iCandy = plr->money;
+    resp.iNewItemSlot = req->iCostumeItemSlot;
+    resp.iStatItemSlot = req->iStatItemSlot;
+    resp.sNewItem = *itemLooks;
+    
+    sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_ITEM_COMBINATION_SUCC, sizeof(sP_FE2CL_REP_PC_ITEM_COMBINATION_SUCC));
+}
+
 void NPCManager::npcBarkHandler(CNSocket* sock, CNPacketData* data) {} // stubbed for now
+
+void NPCManager::npcUnsummonHandler(CNSocket* sock, CNPacketData* data) {
+    if (data->size != sizeof(sP_CL2FE_REQ_NPC_UNSUMMON))
+        return; // malformed packet
+
+    if (!PlayerManager::getPlayer(sock)->IsGM)
+        return;
+    
+    sP_CL2FE_REQ_NPC_UNSUMMON* req = (sP_CL2FE_REQ_NPC_UNSUMMON*)data->buf;
+    NPCManager::removeNPC(req->iNPC_ID);
+}
 
 void NPCManager::npcSummonHandler(CNSocket* sock, CNPacketData* data) {
     if (data->size != sizeof(sP_CL2FE_REQ_NPC_SUMMON))
@@ -293,7 +427,7 @@ void NPCManager::npcSummonHandler(CNSocket* sock, CNPacketData* data) {
     if (!plr->IsGM || req->iNPCType >= 3314)
         return;
 
-    resp.NPCAppearanceData.iNPC_ID = rand(); // cpunch-style
+    resp.NPCAppearanceData.iNPC_ID = NPCs.size()+1;
     resp.NPCAppearanceData.iNPCType = req->iNPCType;
     resp.NPCAppearanceData.iHP = 1000; // TODO: placeholder
     resp.NPCAppearanceData.iX = plr->x;
@@ -301,6 +435,8 @@ void NPCManager::npcSummonHandler(CNSocket* sock, CNPacketData* data) {
     resp.NPCAppearanceData.iZ = plr->z;
 
     NPCs[resp.NPCAppearanceData.iNPC_ID] = new BaseNPC(plr->x, plr->y, plr->z, req->iNPCType);
+    NPCs[resp.NPCAppearanceData.iNPC_ID]->appearanceData.iNPC_ID = resp.NPCAppearanceData.iNPC_ID;
+
     ChunkManager::addNPC(plr->x, plr->y, resp.NPCAppearanceData.iNPC_ID);
 }
 

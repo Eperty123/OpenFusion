@@ -153,13 +153,13 @@ int Database::createCharacter(sP_CL2LS_REQ_SAVE_CHAR_NAME* save, int AccountID)
     create.EyeColor = 1;
     create.FaceStyle = 1;
     create.Gender = 1;
-    create.HP = 1000;
+    create.Level = 1;
+    create.HP = PC_MAXHEALTH(create.Level);
     create.HairColor = 1;
     create.HairStyle = 1;
     create.Height = 0;
-    create.Level = 1;
     create.SkinColor = 1;
-    create.isGM = false;
+    create.isGM = settings::GM;
     create.x_coordinates = settings::SPAWN_X;
     create.y_coordinates = settings::SPAWN_Y;
     create.z_coordinates = settings::SPAWN_Z;

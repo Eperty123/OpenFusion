@@ -21,10 +21,11 @@ namespace NPCManager {
     void init();
 
     void addNPC(std::vector<Chunk*> viewableChunks, int32_t);
-    void removeNPC(std::vector<Chunk*> viewableChunks, int32_t);
+    void removeNPC(int32_t);
 
     void npcBarkHandler(CNSocket* sock, CNPacketData* data);
     void npcSummonHandler(CNSocket* sock, CNPacketData* data);
+    void npcUnsummonHandler(CNSocket* sock, CNPacketData* data);
     void npcWarpHandler(CNSocket* sock, CNPacketData* data);
 
     void npcVendorStart(CNSocket* sock, CNPacketData* data);
@@ -33,4 +34,5 @@ namespace NPCManager {
     void npcVendorSell(CNSocket* sock, CNPacketData* data);
     void npcVendorBuyback(CNSocket* sock, CNPacketData* data);
     void npcVendorBuyBattery(CNSocket* sock, CNPacketData* data);
+    void npcCombineItems(CNSocket* sock, CNPacketData* data);
 }

@@ -206,6 +206,7 @@ void PlayerManager::enterPlayer(CNSocket* sock, CNPacketData* data) {
     response.PCLoadData2CL.iHP = plr.HP;
     response.PCLoadData2CL.iLevel = plr.level;
     response.PCLoadData2CL.iCandy = plr.money;
+    response.PCLoadData2CL.iFusionMatter = plr.fusionmatter;
     response.PCLoadData2CL.iMentor = 5; // Computress
     response.PCLoadData2CL.iMentorCount = 1; // how many guides the player has had
     response.PCLoadData2CL.iMapNum = 0;
@@ -632,7 +633,7 @@ void PlayerManager::revivePlayer(CNSocket* sock, CNPacketData* data) {
     plr->x = target.x;
     plr->y = target.y;
     plr->z = target.z;
-    plr->HP = 1000 * plr->level;
+    plr->HP = PC_MAXHEALTH(plr->level);
 
     // Response parameters
     response.PCRegenData.iActiveNanoSlotNum = plr->activeNano;
