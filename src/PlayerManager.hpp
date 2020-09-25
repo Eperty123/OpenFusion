@@ -32,6 +32,7 @@ namespace PlayerManager {
 
     void updatePlayerPosition(CNSocket* sock, int X, int Y, int Z);
     void updatePlayerPosition(CNSocket* sock, int X, int Y, int Z, int angle);
+    void updatePlayerChunk(CNSocket* sock, int X, int Y);
 
     void sendToViewable(CNSocket* sock, void* buf, uint32_t type, size_t size);
 
@@ -44,6 +45,7 @@ namespace PlayerManager {
     void launchPlayer(CNSocket* sock, CNPacketData* data);
     void ziplinePlayer(CNSocket* sock, CNPacketData* data);
     void movePlatformPlayer(CNSocket* sock, CNPacketData* data);
+    void moveSliderPlayer(CNSocket* sock, CNPacketData* data);
     void moveSlopePlayer(CNSocket* sock, CNPacketData* data);
     void gotoPlayer(CNSocket* sock, CNPacketData* data);
     void setSpecialPlayer(CNSocket* sock, CNPacketData* data);

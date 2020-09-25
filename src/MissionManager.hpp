@@ -38,6 +38,7 @@ struct TaskData {
 namespace MissionManager {
     extern std::map<int32_t, Reward*> Rewards;
     extern std::map<int32_t, TaskData*> Tasks;
+    extern nlohmann::json AvatarGrowth[36];
     void init();
 
     void taskStart(CNSocket* sock, CNPacketData* data);
@@ -47,9 +48,13 @@ namespace MissionManager {
 
     int findQSlot(Player *plr, int id);
     void dropQuestItem(CNSocket *sock, int task, int count, int id, int mobid);
+    //checks if player doesn't have n/n quest items
+    bool isQuestItemFull(CNSocket* sock, int itemId, int itemCount);
     int giveMissionReward(CNSocket *sock, int task);
+    void updateFusionMatter(CNSocket* sock, int fusion);
 
     void mobKilled(CNSocket *sock, int mobid);
 
     void saveMission(Player* player, int missionId);
+    void quitTask(CNSocket* sock, int32_t taskNum);
 }

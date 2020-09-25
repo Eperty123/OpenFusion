@@ -1,13 +1,17 @@
 #pragma once
 
 #include "CNStructs.hpp"
+#include "ChunkManager.hpp"
 
 class BaseNPC {
 public:
     sNPCAppearanceData appearanceData;
+    NPCClass npcClass;
+    std::pair<int, int> chunkPos;
+    std::vector<Chunk*> currentChunks;
 
     BaseNPC() {};
-    BaseNPC(int x, int y, int z, int type) {
+    BaseNPC(int x, int y, int z, int type, int id) {
         appearanceData.iX = x;
         appearanceData.iY = y;
         appearanceData.iZ = z;
@@ -16,8 +20,11 @@ public:
         appearanceData.iAngle = 0;
         appearanceData.iConditionBitFlag = 0;
         appearanceData.iBarkerType = 0;
+        appearanceData.iNPC_ID = id;
 
-        // hopefully no collisions happen :eyes:
-        appearanceData.iNPC_ID = (int32_t)rand();
+        chunkPos = std::pair<int, int>(0, 0);
     };
+    BaseNPC(int x, int y, int z, int type, int id, NPCClass classType) : BaseNPC(x, y, z, type, id) {
+        npcClass = classType;
+    }
 };

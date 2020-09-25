@@ -1,6 +1,7 @@
 CC=clang
 CXX=clang++
 # -w suppresses all warnings (the part that's commented out helps me find memory leaks, it ruins performance though!)
+# If compiling with ASAN, invoke like this: $ LSAN_OPTIONS=suppressions=suppr.txt bin/fusion
 CFLAGS=-O3 #-g3 -fsanitize=address
 CXXFLAGS=-Wall -Wno-unknown-pragmas -std=c++17 -O2 -DPROTOCOL_VERSION=$(PROTOCOL_VERSION) -DGIT_VERSION=\"$(shell git describe --tags)\" #-g3 -fsanitize=address
 LDFLAGS=-lpthread -ldl #-g3 -fsanitize=address
@@ -47,6 +48,7 @@ CXXSRC=\
 	src/TransportManager.cpp\
 	src/TableData.cpp\
 	src/ChunkManager.cpp\
+	src/BuddyManager.cpp\
 
 # headers (for timestamp purposes)
 CHDR=\
@@ -83,6 +85,7 @@ CXXHDR=\
 	src/TransportManager.hpp\
 	src/TableData.hpp\
 	src/ChunkManager.hpp\
+	src/BuddyManager.hpp\
 
 COBJ=$(CSRC:.c=.o)
 CXXOBJ=$(CXXSRC:.cpp=.o)

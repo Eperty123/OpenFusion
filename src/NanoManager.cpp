@@ -36,6 +36,8 @@ std::set<int> TreasureFinderPowers = {26, 40, 74};
  * worker functions so we don't have to have unsightly function declarations.
  */
 
+std::map<int32_t, NanoData> NanoManager::NanoTable;
+
 }; // namespace
 
 void NanoManager::init() {
@@ -47,6 +49,7 @@ void NanoManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_GIVE_NANO_SKILL, nanoSkillSetGMHandler);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_NANO_SKILL_USE, nanoSkillUseHandler);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_WARP_USE_RECALL, nanoRecallHandler);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_CHARGE_NANO_STAMINA, nanoPotionHandler);
 }
 
 void NanoManager::nanoEquipHandler(CNSocket* sock, CNPacketData* data) {
@@ -169,6 +172,35 @@ void NanoManager::nanoRecallHandler(CNSocket* sock, CNPacketData* data) {
     // stubbed for now
 }
 
+void NanoManager::nanoPotionHandler(CNSocket* sock, CNPacketData* data) {
+    if (data->size != sizeof(sP_CL2FE_REQ_CHARGE_NANO_STAMINA))
+        return;
+    
+    Player* player = PlayerManager::getPlayer(sock);
+    //sanity check
+    if (player->activeNano == -1 || player->batteryN == 0)
+        return;
+
+    sNano nano = player->Nanos[player->activeNano];
+    int difference = 150 - nano.iStamina;
+    if (player->batteryN < difference)
+        difference = player->batteryN;
+
+    if (difference == 0)
+        return;
+
+    INITSTRUCT(sP_FE2CL_REP_CHARGE_NANO_STAMINA, response);
+    response.iNanoID = nano.iID;
+    response.iNanoStamina = nano.iStamina + difference;
+    response.iBatteryN = player->batteryN - difference;
+
+    sock->sendPacket((void*)&response, P_FE2CL_REP_CHARGE_NANO_STAMINA, sizeof(sP_FE2CL_REP_CHARGE_NANO_STAMINA));
+    //now update serverside
+    player->batteryN -= difference;
+    player->Nanos[nano.iID].iStamina += difference;
+
+}
+
 #pragma region Helper methods
 void NanoManager::addNano(CNSocket* sock, int16_t nanoId, int16_t slot) {
     if (nanoId > 36)
@@ -184,7 +216,7 @@ void NanoManager::addNano(CNSocket* sock, int16_t nanoId, int16_t slot) {
     resp.Nano.iStamina = 150;
     resp.iQuestItemSlotNum = slot;
     resp.iPC_Level = level;
-    resp.iPC_FusionMatter = plr->fusionmatter; // will decrese in actual nano missions
+    resp.iPC_FusionMatter = plr->fusionmatter; // will decrease in actual nano missions
 
     // Update player
     plr->Nanos[nanoId] = resp.Nano;
@@ -309,16 +341,13 @@ bool doDebuff(CNSocket *sock, int32_t *pktdata, sSkillResult_Damage_N_Debuff *re
 
     Mob* mob = MobManager::Mobs[pktdata[i]];
     
-    mob->appearanceData.iHP -= amount;
-
-    if (mob->appearanceData.iHP <= 0)
-        MobManager::killMob(sock, mob);
+    int damage = MobManager::hitMob(sock, mob, amount);
     
     respdata[i].eCT = 4;
-    respdata[i].iDamage = amount;
+    respdata[i].iDamage = damage;
     respdata[i].iID = mob->appearanceData.iNPC_ID;
     respdata[i].iHP = mob->appearanceData.iHP;
-    respdata[i].iConditionBitFlag = iCBFlag;
+    respdata[i].iConditionBitFlag = mob->appearanceData.iConditionBitFlag |= iCBFlag;
 
     std::cout << (int)mob->appearanceData.iNPC_ID << " was debuffed" << std::endl;
 
@@ -336,7 +365,7 @@ bool doBuff(CNSocket *sock, int32_t *pktdata, sSkillResult_Buff *respdata, int i
     
     respdata[i].eCT = 4;
     respdata[i].iID = mob->appearanceData.iNPC_ID;
-    respdata[i].iConditionBitFlag = iCBFlag;
+    respdata[i].iConditionBitFlag = mob->appearanceData.iConditionBitFlag |= iCBFlag;
 
     std::cout << (int)mob->appearanceData.iNPC_ID << " was debuffed" << std::endl;
 
@@ -380,13 +409,10 @@ bool doDamage(CNSocket *sock, int32_t *pktdata, sSkillResult_Damage *respdata, i
     }
     Mob* mob = MobManager::Mobs[pktdata[i]];
     
-    mob->appearanceData.iHP -= amount;
+    int damage = MobManager::hitMob(sock, mob, amount);
 
-    if (mob->appearanceData.iHP <= 0)
-        MobManager::killMob(sock, mob);
-    
     respdata[i].eCT = 4;
-    respdata[i].iDamage = amount;
+    respdata[i].iDamage = damage;
     respdata[i].iID = mob->appearanceData.iNPC_ID;
     respdata[i].iHP = mob->appearanceData.iHP;
 
@@ -430,13 +456,10 @@ bool doLeech(CNSocket *sock, int32_t *pktdata, sSkillResult_Heal_HP *healdata, i
     }
     Mob* mob = MobManager::Mobs[pktdata[i]];
     
-    mob->appearanceData.iHP -= amount;
-
-    if (mob->appearanceData.iHP <= 0)
-        MobManager::killMob(sock, mob);
+    int damage = MobManager::hitMob(sock, mob, amount);
     
     damagedata->eCT = 4;
-    damagedata->iDamage = amount;
+    damagedata->iDamage = damage;
     damagedata->iID = mob->appearanceData.iNPC_ID;
     damagedata->iHP = mob->appearanceData.iHP;
 
@@ -506,7 +529,7 @@ std::vector<ActivePower> ActivePowers = {
     ActivePower(StunPowers, activePower<sSkillResult_Damage_N_Debuff,  doDebuff>,         EST_STUN, CSB_BIT_STUN,                 0),
     ActivePower(HealPowers, activePower<sSkillResult_Heal_HP,          doHeal>,           EST_HEAL_HP, CSB_BIT_NONE,            333),
     // TODO: Recall
-    ActivePower(DrainPowers, activePower<sSkillResult_Buff, doBuff>,                      EST_BOUNDINGBALL, CSB_BIT_BOUNDINGBALL, 0),
+    ActivePower(DrainPowers, activePower<sSkillResult_Buff,            doBuff>,           EST_BOUNDINGBALL, CSB_BIT_BOUNDINGBALL, 0),
     ActivePower(SnarePowers, activePower<sSkillResult_Damage_N_Debuff, doDebuff>,         EST_SNARE, CSB_BIT_DN_MOVE_SPEED,       0),
     ActivePower(DamagePowers, activePower<sSkillResult_Damage,         doDamage>,         EST_DAMAGE, CSB_BIT_NONE,             133),
     // TODO: GroupRevive
@@ -585,6 +608,13 @@ void NanoManager::nanoUnbuff(CNSocket* sock, int32_t iCBFlag, int16_t eCharStatu
         resp1.TimeBuff.iValue = iValue;
     
     sock->sendPacket((void*)&resp1, P_FE2CL_PC_BUFF_UPDATE, sizeof(sP_FE2CL_PC_BUFF_UPDATE));
+}
+
+// 0=A 1=B 2=C -1=Not found
+int NanoManager::nanoStyle(int nanoId) {
+    if (nanoId < 0 || nanoId >= NanoTable.size())
+        return -1;
+    return NanoTable[nanoId].style;
 }
 
 namespace NanoManager {

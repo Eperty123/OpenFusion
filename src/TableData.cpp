@@ -6,13 +6,14 @@
 #include "MissionManager.hpp"
 #include "MobManager.hpp"
 #include "ChunkManager.hpp"
+#include "NanoManager.hpp"
 
 #include "contrib/JSON.hpp"
 
 #include <fstream>
 
 void TableData::init() {
-    int i = 0;
+    int32_t nextId = 0;
 
     // load NPCs from NPC.json
     try {
@@ -24,14 +25,11 @@ void TableData::init() {
 
         for (nlohmann::json::iterator _npc = npcData.begin(); _npc != npcData.end(); _npc++) {
             auto npc = _npc.value();
-            BaseNPC *tmp = new BaseNPC(npc["x"], npc["y"], npc["z"], npc["id"]);
+            BaseNPC *tmp = new BaseNPC(npc["x"], npc["y"], npc["z"], npc["id"], nextId);
 
-            // Temporary fix, IDs will be pulled from json later
-            tmp->appearanceData.iNPC_ID = i;
-
-            NPCManager::NPCs[i] = tmp;
-            ChunkManager::addNPC(npc["x"], npc["y"], i);
-            i++;
+            NPCManager::NPCs[nextId] = tmp;
+            NPCManager::updateNPCPosition(nextId, npc["x"], npc["y"], npc["z"]);
+            nextId++;
 
             if (npc["id"] == 641 || npc["id"] == 642)
                 NPCManager::RespawnPoints.push_back({ npc["x"], npc["y"], ((int)npc["z"]) + RESURRECT_HEIGHT });
@@ -42,6 +40,8 @@ void TableData::init() {
         std::cerr << "[WARN] Malformed NPCs.json file! Reason:" << err.what() << std::endl;
     }
 
+    loadPaths(); // load paths
+
     // load everything else from xdttable
     std::cout << "[INFO] Parsing xdt.json..." << std::endl;
     std::ifstream infile(settings::XDTJSON);
@@ -49,6 +49,9 @@ void TableData::init() {
 
     // read file into json
     infile >> xdtData;
+
+    // data we'll need for summoned mobs
+    NPCManager::NPCData = xdtData["m_pNpcTable"]["m_pNpcData"];
 
     try {
         // load warps
@@ -72,7 +75,7 @@ void TableData::init() {
             TransportLocation transLoc = { tLoc["m_iNPCID"], tLoc["m_iXpos"], tLoc["m_iYpos"], tLoc["m_iZpos"] };
             TransportManager::Locations[tLoc["m_iLocationID"]] = transLoc;
         }
-        std::cout << "[INFO] Loaded " << TransportManager::Locations.size() << " S.C.A.M.P.E.R. locations" << std::endl; // TODO: Skyway operates differently
+        std::cout << "[INFO] Loaded " << TransportManager::Locations.size() << " S.C.A.M.P.E.R. locations" << std::endl;
 
         for (nlohmann::json::iterator _tRoute = transRouteData.begin(); _tRoute != transRouteData.end(); _tRoute++) {
             auto tRoute = _tRoute.value();
@@ -121,6 +124,14 @@ void TableData::init() {
 
         std::cout << "[INFO] Loaded " << ItemManager::ItemData.size() << " items" << std::endl;
 
+        // load player limits from m_pAvatarTable.m_pAvatarGrowData
+        
+        nlohmann::json growth = xdtData["m_pAvatarTable"]["m_pAvatarGrowData"];
+
+        for (int i = 0; i < 36; i++) {
+            MissionManager::AvatarGrowth[i] = growth[i];
+        }
+
         // load vendor listings
         nlohmann::json listings = xdtData["m_pVendorTable"]["m_pItemData"];
 
@@ -142,6 +153,17 @@ void TableData::init() {
         }
 
         std::cout << "[INFO] Loaded " << ItemManager::CrocPotTable.size() << " croc pot value sets" << std::endl;
+
+        //load nano info
+        nlohmann::json nanoInfo = xdtData["m_pNanoTable"]["m_pNanoData"];
+        for (nlohmann::json::iterator _nano = nanoInfo.begin(); _nano != nanoInfo.end(); _nano++) {
+            auto nano = _nano.value();
+            NanoData nanoData;
+            nanoData.style = nano["m_iStyle"];
+            NanoManager::NanoTable[nano["m_iNanoNumber"]] = nanoData;
+        }
+
+        std::cout << "[INFO] Loaded " << NanoManager::NanoTable.size() << " nanos" << std::endl;
     }
     catch (const std::exception& err) {
         std::cerr << "[WARN] Malformed xdt.json file! Reason:" << err.what() << std::endl;
@@ -155,21 +177,16 @@ void TableData::init() {
         // read file into json
         inFile >> npcData;
 
-        nlohmann::json npcTableData = xdtData["m_pNpcTable"]["m_pNpcData"];
-
         for (nlohmann::json::iterator _npc = npcData.begin(); _npc != npcData.end(); _npc++) {
             auto npc = _npc.value();
-            auto td = npcTableData[(int)npc["iNPCType"]];
-            Mob *tmp = new Mob(npc["iX"], npc["iY"], npc["iZ"], npc["iNPCType"], npc["iHP"], npc["iAngle"], td["m_iRegenTime"]);
+            auto td = NPCManager::NPCData[(int)npc["iNPCType"]];
+            Mob *tmp = new Mob(npc["iX"], npc["iY"], npc["iZ"], npc["iNPCType"], npc["iHP"], npc["iAngle"], td, nextId);
 
-            // Temporary fix, IDs will be pulled from json later
-            tmp->appearanceData.iNPC_ID = i;
+            NPCManager::NPCs[nextId] = tmp;
+            MobManager::Mobs[nextId] = (Mob*)NPCManager::NPCs[nextId];
+            NPCManager::updateNPCPosition(nextId, npc["iX"], npc["iY"], npc["iZ"]);
 
-            NPCManager::NPCs[i] = tmp;
-            MobManager::Mobs[i] = (Mob*)NPCManager::NPCs[i];
-            ChunkManager::addNPC(npc["iX"], npc["iY"], i);
-
-            i++;
+            nextId++;
         }
 
         std::cout << "[INFO] Populated " << NPCManager::NPCs.size() << " NPCs" << std::endl;
@@ -177,19 +194,8 @@ void TableData::init() {
     catch (const std::exception& err) {
         std::cerr << "[WARN] Malformed mobs.json file! Reason:" << err.what() << std::endl;
     }
-}
 
-void TableData::cleanup() {
-    /*
-     * This is just to shut the address sanitizer up. Dynamically allocated data
-     * doesn't need to be cleaned up if it's supposed to last the program's full runtime.
-     */
-    for (auto& pair : MissionManager::Rewards)
-        delete pair.second;
-    for (auto& pair : MissionManager::Tasks)
-        delete pair.second;
-    for (auto& pair : NPCManager::NPCs)
-        delete pair.second;
+    NPCManager::nextId = nextId;
 }
 
 /*
@@ -212,4 +218,77 @@ int TableData::getItemType(int itemSet) {
         overriden = -1;
     }
     return overriden;
+}
+
+/*
+ * Load paths from paths JSON.
+ */
+void TableData::loadPaths() {
+    try {
+        std::ifstream inFile(settings::PATHJSON);
+        nlohmann::json pathData;
+
+        // read file into json
+        inFile >> pathData;
+
+        // skyway paths
+        nlohmann::json pathDataSkyway = pathData["skyway"];
+        for (nlohmann::json::iterator skywayPath = pathDataSkyway.begin(); skywayPath != pathDataSkyway.end(); skywayPath++) {
+            constructPathSkyway(skywayPath);
+        }
+        std::cout << "[INFO] Loaded " << TransportManager::SkywayPaths.size() << " skyway paths" << std::endl;
+
+        // npc paths
+        nlohmann::json pathDataNPC = pathData["npc"];
+        for (nlohmann::json::iterator npcPath = pathDataNPC.begin(); npcPath != pathDataNPC.end(); npcPath++) {
+            constructPathNPC(npcPath);
+        }
+        std::cout << "[INFO] Loaded " << TransportManager::NPCQueues.size() << " NPC paths" << std::endl;
+    }
+    catch (const std::exception& err) {
+        std::cerr << "[WARN] Malformed paths.json file! Reason:" << err.what() << std::endl;
+    }
+}
+
+/*
+ * Create a full and properly-paced path by interpolating between keyframes.
+ */
+void TableData::constructPathSkyway(nlohmann::json::iterator _pathData) {
+    auto pathData = _pathData.value();
+    // Interpolate
+    nlohmann::json pathPoints = pathData["points"];
+    std::queue<WarpLocation> points;
+    nlohmann::json::iterator _point = pathPoints.begin();
+    auto point = _point.value();
+    WarpLocation last = { point["iX"] , point["iY"] , point["iZ"] }; // start pos
+    // use some for loop trickery; start position should not be a point
+    for (_point++; _point != pathPoints.end(); _point++) {
+        point = _point.value();
+        WarpLocation coords = { point["iX"] , point["iY"] , point["iZ"] };
+        TransportManager::lerp(&points, last, coords, pathData["iMonkeySpeed"]);
+        points.push(coords); // add keyframe to the queue
+        last = coords; // update start pos
+    }
+    TransportManager::SkywayPaths[pathData["iRouteID"]] = points;
+}
+
+void TableData::constructPathNPC(nlohmann::json::iterator _pathData) {
+    auto pathData = _pathData.value();
+    // Interpolate
+    nlohmann::json pathPoints = pathData["points"];
+    std::queue<WarpLocation> points;
+    nlohmann::json::iterator _point = pathPoints.begin();
+    auto point = _point.value();
+    WarpLocation from = { point["iX"] , point["iY"] , point["iZ"] }; // point A coords
+    int stopTime = point["stop"];
+    for (_point++; _point != pathPoints.end(); _point++) { // loop through all point Bs
+        point = _point.value();
+        for(int i = 0; i < stopTime + 1; i++) // repeat point if it's a stop
+            points.push(from); // add point A to the queue
+        WarpLocation to = { point["iX"] , point["iY"] , point["iZ"] }; // point B coords
+        TransportManager::lerp(&points, from, to, pathData["iBaseSpeed"]); // lerp from A to B
+        from = to; // update point A
+        stopTime = point["stop"];
+    }
+    TransportManager::NPCQueues[pathData["iNPCID"]] = points;
 }

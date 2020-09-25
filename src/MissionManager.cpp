@@ -2,18 +2,45 @@
 #include "CNStructs.hpp"
 #include "MissionManager.hpp"
 #include "PlayerManager.hpp"
+#include "NanoManager.hpp"
 #include "ItemManager.hpp"
 
 #include "string.h"
 
 std::map<int32_t, Reward*> MissionManager::Rewards;
 std::map<int32_t, TaskData*> MissionManager::Tasks;
+nlohmann::json MissionManager::AvatarGrowth[36];
 
 void MissionManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_TASK_START, taskStart);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_TASK_END, taskEnd);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_SET_CURRENT_MISSION_ID, setMission);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_TASK_STOP, quitMission);
+}
+
+bool startTask(Player* plr, int TaskID) {
+    if (MissionManager::Tasks.find(TaskID) == MissionManager::Tasks.end()) {
+        std::cout << "[WARN] Player submitted unknown task!?" << std::endl;
+        return false;
+    }
+    
+    TaskData& task = *MissionManager::Tasks[TaskID];
+    int i;
+    for (i = 0; i < ACTIVE_MISSION_COUNT; i++) {
+        if (plr->tasks[i] == 0) {
+            plr->tasks[i] = TaskID;
+            for (int j = 0; j < 3; j++) {
+                plr->RemainingNPCCount[i][j] = (int)task["m_iCSUNumToKill"][j];
+            }
+            break;
+        }
+    }
+
+    if (i == ACTIVE_MISSION_COUNT - 1 && plr->tasks[i] != TaskID) {
+        std::cout << "[WARN] Player has more than 6 active missions!?" << std::endl;
+    }
+
+    return true;
 }
 
 void MissionManager::taskStart(CNSocket* sock, CNPacketData* data) {
@@ -24,25 +51,13 @@ void MissionManager::taskStart(CNSocket* sock, CNPacketData* data) {
     INITSTRUCT(sP_FE2CL_REP_PC_TASK_START_SUCC, response);
     Player *plr = PlayerManager::getPlayer(sock);
 
-    if (Tasks.find(missionData->iTaskNum) == Tasks.end()) {
-        std::cout << "[WARN] Player submitted unknown task!?" << std::endl;
+    if (!startTask(plr, missionData->iTaskNum)) {
         // TODO: TASK_FAIL?
         response.iTaskNum = missionData->iTaskNum;
         sock->sendPacket((void*)&response, P_FE2CL_REP_PC_TASK_START_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_START_SUCC));
         return;
     }
-
-    int i;
-    for (i = 0; i < ACTIVE_MISSION_COUNT; i++) {
-        if (plr->tasks[i] == 0) {
-            plr->tasks[i] = missionData->iTaskNum;
-            break;
-        }
-    }
-    if (i == ACTIVE_MISSION_COUNT - 1 && plr->tasks[i] != missionData->iTaskNum) {
-        std::cout << "[WARN] Player has more than 6 active missions!?" << std::endl;
-    }
-
+    
     response.iTaskNum = missionData->iTaskNum;
     sock->sendPacket((void*)&response, P_FE2CL_REP_PC_TASK_START_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_START_SUCC));
 }
@@ -80,6 +95,7 @@ void MissionManager::taskEnd(CNSocket* sock, CNPacketData* data) {
      * iSUInstancename is the number of items to give. It is usually negative at the end of
      * a mission, to clean up its quest items.
      */
+
     for (int i = 0; i < 3; i++)
         if (task["m_iSUItem"][i] != 0)
             dropQuestItem(sock, missionData->iTaskNum, task["m_iSUInstancename"][i], task["m_iSUItem"][i], 0);
@@ -94,7 +110,12 @@ void MissionManager::taskEnd(CNSocket* sock, CNPacketData* data) {
     int i;
     for (i = 0; i < ACTIVE_MISSION_COUNT; i++) {
         if (plr->tasks[i] == missionData->iTaskNum)
+        {
             plr->tasks[i] = 0;
+            for (int j = 0; j < 3; j++) {
+                plr->RemainingNPCCount[i][j] = 0;
+            }
+        }
     }
     if (i == ACTIVE_MISSION_COUNT - 1 && plr->tasks[i] != 0) {
         std::cout << "[WARN] Player completed non-active mission!?" << std::endl;
@@ -105,6 +126,14 @@ void MissionManager::taskEnd(CNSocket* sock, CNPacketData* data) {
     {
         // save completed mission on player
         saveMission(plr, (int)(task["m_iHMissionID"])-1);
+
+        // if it's a nano mission, reward the nano.
+        if (task["m_iSTNanoID"] != 0) {
+            NanoManager::addNano(sock, task["m_iSTNanoID"], 0);
+        }
+
+        // remove current mission
+        plr->CurrentMissionID = 0;
     }
 
     sock->sendPacket((void*)&response, P_FE2CL_REP_PC_TASK_END_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_END_SUCC));
@@ -116,9 +145,11 @@ void MissionManager::setMission(CNSocket* sock, CNPacketData* data) {
 
     sP_CL2FE_REQ_PC_SET_CURRENT_MISSION_ID* missionData = (sP_CL2FE_REQ_PC_SET_CURRENT_MISSION_ID*)data->buf;
     INITSTRUCT(sP_FE2CL_REP_PC_SET_CURRENT_MISSION_ID, response);
-
+    
     response.iCurrentMissionID = missionData->iCurrentMissionID;
     sock->sendPacket((void*)&response, P_FE2CL_REP_PC_SET_CURRENT_MISSION_ID, sizeof(sP_FE2CL_REP_PC_SET_CURRENT_MISSION_ID));
+    Player* plr = PlayerManager::getPlayer(sock);
+    plr->CurrentMissionID = missionData->iCurrentMissionID;
 }
 
 void MissionManager::quitMission(CNSocket* sock, CNPacketData* data) {
@@ -126,24 +157,35 @@ void MissionManager::quitMission(CNSocket* sock, CNPacketData* data) {
         return; // malformed packet
 
     sP_CL2FE_REQ_PC_TASK_STOP* missionData = (sP_CL2FE_REQ_PC_TASK_STOP*)data->buf;
+    quitTask(sock, missionData->iTaskNum);
+}
+
+void MissionManager::quitTask(CNSocket* sock, int32_t taskNum) {
     INITSTRUCT(sP_FE2CL_REP_PC_TASK_STOP_SUCC, response);
-    Player *plr = PlayerManager::getPlayer(sock);
+    Player* plr = PlayerManager::getPlayer(sock);
 
     // update player
     int i;
     for (i = 0; i < ACTIVE_MISSION_COUNT; i++) {
-        if (plr->tasks[i] == missionData->iTaskNum)
+        if (plr->tasks[i] == taskNum)
+        {
             plr->tasks[i] = 0;
+            for (int j = 0; j < 3; j++) {
+                plr->RemainingNPCCount[i][j] = 0;
+            }
+        }
     }
     if (i == ACTIVE_MISSION_COUNT - 1 && plr->tasks[i] != 0) {
         std::cout << "[WARN] Player quit non-active mission!?" << std::endl;
     }
+    // remove current mission
+    plr->CurrentMissionID = 0;
 
-    TaskData& task = *Tasks[missionData->iTaskNum];
+    TaskData& task = *Tasks[taskNum];
 
     // clean up quest items
     for (i = 0; i < 3; i++) {
-        if (task["m_iSUItem"][i] == 0 && task["m_iCSUItem"][i] == 0)
+        if (task["m_iSUItem"][i] == 0 && task["m_iCSUItemID"][i] == 0)
             continue;
 
         /*
@@ -151,11 +193,11 @@ void MissionManager::quitMission(CNSocket* sock, CNPacketData* data) {
          * slot later items will be placed in.
          */
         for (int j = 0; j < AQINVEN_COUNT; j++)
-            if (plr->QInven[j].iID == task["m_iSUItem"][i] || plr->QInven[j].iID == task["m_iCSUItem"][i])
+            if (plr->QInven[j].iID == task["m_iSUItem"][i] || plr->QInven[j].iID == task["m_iCSUItemID"][i])
                 memset(&plr->QInven[j], 0, sizeof(sItemBase));
     }
 
-    response.iTaskNum = missionData->iTaskNum;
+    response.iTaskNum = taskNum;
     sock->sendPacket((void*)&response, P_FE2CL_REP_PC_TASK_STOP_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_STOP_SUCC));
 }
 
@@ -264,7 +306,7 @@ int MissionManager::giveMissionReward(CNSocket *sock, int task) {
 
     // update player
     plr->money += reward->money;
-    plr->fusionmatter += reward->fusionmatter;
+    MissionManager::updateFusionMatter(sock, reward->fusionmatter);
 
     // simple rewards
     resp->m_iCandy = plr->money;
@@ -284,7 +326,33 @@ int MissionManager::giveMissionReward(CNSocket *sock, int task) {
     }
 
     sock->sendPacket((void*)respbuf, P_FE2CL_REP_REWARD_ITEM, resplen);
+
     return 0;
+}
+
+void MissionManager::updateFusionMatter(CNSocket* sock, int fusion) {
+    Player *plr = PlayerManager::getPlayer(sock);
+
+    plr->fusionmatter += fusion;
+
+    // check if it is over the limit
+    if (plr->fusionmatter > AvatarGrowth[plr->level]["m_iReqBlob_NanoCreate"]) {
+        // check if the nano task is already started
+
+        for (int i = 0; i < ACTIVE_MISSION_COUNT; i++) {
+            TaskData& task = *Tasks[plr->tasks[i]];
+            if (task["m_iSTNanoID"] != 0)
+                return; // nano mission was already started!
+        }
+
+        // start the nano mission
+        startTask(plr, AvatarGrowth[plr->level]["m_iNanoQuestTaskID"]);
+
+        INITSTRUCT(sP_FE2CL_REP_PC_TASK_START_SUCC, response);
+        response.iTaskNum = AvatarGrowth[plr->level]["m_iNanoQuestTaskID"];
+        sock->sendPacket((void*)&response, P_FE2CL_REP_PC_TASK_START_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_START_SUCC));
+        return;
+    }
 }
 
 void MissionManager::mobKilled(CNSocket *sock, int mobid) {
@@ -304,10 +372,18 @@ void MissionManager::mobKilled(CNSocket *sock, int mobid) {
 
             // acknowledge killing of mission mob...
             if (task["m_iCSUNumToKill"][j] != 0)
+            {
                 missionmob = true;
-
+                // sanity check
+                if (plr->RemainingNPCCount[i][j] == 0) {
+                    std::cout << "[WARN] RemainingNPCCount tries to go below 0?!" << std::endl;
+                }
+                else {
+                    plr->RemainingNPCCount[i][j]--;
+                }
+            }
             // drop quest item
-            if (task["m_iCSUItemNumNeeded"][j] != 0) {
+            if (task["m_iCSUItemNumNeeded"][j] != 0 && !isQuestItemFull(sock, task["m_iCSUItemID"][j], task["m_iCSUItemNumNeeded"][j]) ) {
                 bool drop = rand() % 100 < task["m_iSTItemDropRate"][j];
                 if (drop) {
                     // XXX: are CSUItemID and CSTItemID the same?
@@ -332,8 +408,26 @@ void MissionManager::mobKilled(CNSocket *sock, int mobid) {
 }
 
 void MissionManager::saveMission(Player* player, int missionId) {
+    //sanity check missionID so we don't get exceptions
+    if (missionId < 0 || missionId>1023) {
+        std::cout << "[WARN] Client submitted invalid missionId: " <<missionId<< std::endl;
+        return;
+    }
+
     // Missions are stored in int_64t array
     int row = missionId / 64;
     int column = missionId % 64;
     player->aQuestFlag[row] |= (1ULL << column);
+}
+
+bool MissionManager::isQuestItemFull(CNSocket* sock, int itemId, int itemCount) {
+    Player* plr = PlayerManager::getPlayer(sock);
+    int slot = findQSlot(plr, itemId);
+    if (slot == -1) {
+        // this should never happen
+        std::cout << "[WARN] Player has no room for quest item!?" << std::endl;
+        return true;
+    }
+
+    return (itemCount == plr->QInven[slot].iOpt);
 }

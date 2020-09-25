@@ -3,6 +3,8 @@
 #include "NPCManager.hpp"
 #include "CNShardServer.hpp"
 #include "CNShared.hpp"
+#include "MissionManager.hpp"
+#include "ItemManager.hpp"
 
 #include "settings.hpp"
 
@@ -25,6 +27,7 @@ void PlayerManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_LAUNCHER, PlayerManager::launchPlayer);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_ZIPLINE, PlayerManager::ziplinePlayer);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_MOVEPLATFORM, PlayerManager::movePlatformPlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_MOVETRANSPORTATION, PlayerManager::moveSliderPlayer);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_SLOPE, PlayerManager::moveSlopePlayer);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_GOTO, PlayerManager::gotoPlayer);
     REGISTER_SHARD_PACKET(P_CL2FE_GM_REQ_PC_SET_VALUE, PlayerManager::setSpecialPlayer);
@@ -34,7 +37,7 @@ void PlayerManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_SPECIAL_STATE_SWITCH, PlayerManager::setSpecialSwitchPlayer);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_VEHICLE_ON, PlayerManager::enterPlayerVehicle);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_VEHICLE_OFF, PlayerManager::exitPlayerVehicle);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_CHANGE_MENTOR, PlayerManager::changePlayerGuide);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_CHANGE_MENTOR, PlayerManager::changePlayerGuide);   
 }
 
 void PlayerManager::addPlayer(CNSocket* key, Player plr) {
@@ -77,7 +80,6 @@ void PlayerManager::removePlayer(CNSocket* key) {
 }
 
 void PlayerManager::removePlayerFromChunks(std::vector<Chunk*> chunks, CNSocket* sock) {
-    INITSTRUCT(sP_FE2CL_NPC_EXIT, exitData);
     INITSTRUCT(sP_FE2CL_PC_EXIT, exitPlayer);
 
     // for chunks that need the player to be removed from
@@ -85,8 +87,20 @@ void PlayerManager::removePlayerFromChunks(std::vector<Chunk*> chunks, CNSocket*
 
         // remove NPCs
         for (int32_t id : chunk->NPCs) {
-            exitData.iNPC_ID = id;
-            sock->sendPacket((void*)&exitData, P_FE2CL_NPC_EXIT, sizeof(sP_FE2CL_NPC_EXIT));
+            BaseNPC* npc = NPCManager::NPCs[id];
+            switch (npc->npcClass) {
+            case NPC_BUS:
+                INITSTRUCT(sP_FE2CL_TRANSPORTATION_EXIT, exitBusData);
+                exitBusData.eTT = 3;
+                exitBusData.iT_ID = id;
+                sock->sendPacket((void*)&exitBusData, P_FE2CL_TRANSPORTATION_EXIT, sizeof(sP_FE2CL_TRANSPORTATION_EXIT));
+                break;
+            default:
+                INITSTRUCT(sP_FE2CL_NPC_EXIT, exitData);
+                exitData.iNPC_ID = id;
+                sock->sendPacket((void*)&exitData, P_FE2CL_NPC_EXIT, sizeof(sP_FE2CL_NPC_EXIT));
+                break;
+            }
         }
 
         // remove players from eachother
@@ -98,20 +112,29 @@ void PlayerManager::removePlayerFromChunks(std::vector<Chunk*> chunks, CNSocket*
         }
     }
 
-    // remove us from that old stinky chunk (+ a sanity check)
-    if (ChunkManager::chunks.find(players[sock].chunkPos) != ChunkManager::chunks.end())
-        ChunkManager::chunks[players[sock].chunkPos]->players.erase(sock);
+    // remove us from that old stinky chunk
+    ChunkManager::removePlayer(players[sock].chunkPos, sock);
 }
 
 void PlayerManager::addPlayerToChunks(std::vector<Chunk*> chunks, CNSocket* sock) {
-    INITSTRUCT(sP_FE2CL_NPC_ENTER, enterData);
     INITSTRUCT(sP_FE2CL_PC_NEW, newPlayer);
 
     for (Chunk* chunk : chunks) {
         // add npcs
         for (int32_t id : chunk->NPCs) {
-            enterData.NPCAppearanceData = NPCManager::NPCs[id]->appearanceData;
-            sock->sendPacket((void*)&enterData, P_FE2CL_NPC_ENTER, sizeof(sP_FE2CL_NPC_ENTER));
+            BaseNPC* npc = NPCManager::NPCs[id];
+            switch (npc->npcClass) {
+            case NPC_BUS:
+                INITSTRUCT(sP_FE2CL_TRANSPORTATION_ENTER, enterBusData);
+                enterBusData.AppearanceData = { 3, npc->appearanceData.iNPC_ID, npc->appearanceData.iNPCType, npc->appearanceData.iX, npc->appearanceData.iY, npc->appearanceData.iZ };
+                sock->sendPacket((void*)&enterBusData, P_FE2CL_TRANSPORTATION_ENTER, sizeof(sP_FE2CL_TRANSPORTATION_ENTER));
+                break;
+            default:
+                INITSTRUCT(sP_FE2CL_NPC_ENTER, enterData);
+                enterData.NPCAppearanceData = NPCManager::NPCs[id]->appearanceData;
+                sock->sendPacket((void*)&enterData, P_FE2CL_NPC_ENTER, sizeof(sP_FE2CL_NPC_ENTER));
+                break;
+            }
         }
 
         // add players
@@ -160,22 +183,26 @@ void PlayerManager::updatePlayerPosition(CNSocket* sock, int X, int Y, int Z) {
     view.plr->x = X;
     view.plr->y = Y;
     view.plr->z = Z;
+    updatePlayerChunk(sock, X, Y);
+}
 
+void PlayerManager::updatePlayerChunk(CNSocket* sock, int X, int Y) {
+    PlayerView& view = players[sock];
     std::pair<int, int> newPos = ChunkManager::grabChunk(X, Y);
 
     // nothing to be done
-    if (newPos == view.chunkPos) 
+    if (newPos == view.chunkPos)
         return;
 
     // add player to chunk
-    std::vector<Chunk*> allChunks = ChunkManager::grabChunks(newPos.first, newPos.second);
+    std::vector<Chunk*> allChunks = ChunkManager::grabChunks(newPos);
 
     // first, remove all the old npcs & players from the old chunks
     removePlayerFromChunks(ChunkManager::getDeltaChunks(view.currentChunks, allChunks), sock);
-    
+
     // now, add all the new npcs & players!
     addPlayerToChunks(ChunkManager::getDeltaChunks(allChunks, view.currentChunks), sock);
-    
+
     ChunkManager::addPlayer(X, Y, sock); // takes care of adding the player to the chunk if it exists or not
     view.chunkPos = newPos;
     view.currentChunks = allChunks;
@@ -202,29 +229,39 @@ void PlayerManager::enterPlayer(CNSocket* sock, CNPacketData* data) {
 
     response.iID = plr.iID;
     response.uiSvrTime = getTime();
-    response.PCLoadData2CL.iUserLevel = plr.level;
+    response.PCLoadData2CL.iUserLevel = plr.accountLevel;
     response.PCLoadData2CL.iHP = plr.HP;
     response.PCLoadData2CL.iLevel = plr.level;
     response.PCLoadData2CL.iCandy = plr.money;
     response.PCLoadData2CL.iFusionMatter = plr.fusionmatter;
-    response.PCLoadData2CL.iMentor = 5; // Computress
+    response.PCLoadData2CL.iMentor = plr.mentor;
     response.PCLoadData2CL.iMentorCount = 1; // how many guides the player has had
-    response.PCLoadData2CL.iMapNum = 0;
     response.PCLoadData2CL.iX = plr.x;
     response.PCLoadData2CL.iY = plr.y;
     response.PCLoadData2CL.iZ = plr.z;
     response.PCLoadData2CL.iAngle = plr.angle;
+    response.PCLoadData2CL.iBatteryN = plr.batteryN;
+    response.PCLoadData2CL.iBatteryW = plr.batteryW;
+    response.PCLoadData2CL.iBuddyWarpTime = 60; //sets 60s warp cooldown on login
+
+    response.PCLoadData2CL.iWarpLocationFlag = plr.iWarpLocationFlag;
+    response.PCLoadData2CL.aWyvernLocationFlag[0] = plr.aSkywayLocationFlag[0];
+    response.PCLoadData2CL.aWyvernLocationFlag[1] = plr.aSkywayLocationFlag[1];
 
     response.PCLoadData2CL.iActiveNanoSlotNum = -1;
     response.PCLoadData2CL.iFatigue = 50;
     response.PCLoadData2CL.PCStyle = plr.PCStyle;
-    response.PCLoadData2CL.PCStyle2 = plr.PCStyle2;
+    
+    //client doesnt read this, it gets it from charinfo
+    //response.PCLoadData2CL.PCStyle2 = plr.PCStyle2;
     // inventory
     for (int i = 0; i < AEQUIP_COUNT; i++)
         response.PCLoadData2CL.aEquip[i] = plr.Equip[i];
-
     for (int i = 0; i < AINVEN_COUNT; i++)
         response.PCLoadData2CL.aInven[i] = plr.Inven[i];
+    // quest inventory
+    for (int i = 0; i < AQINVEN_COUNT; i++)
+        response.PCLoadData2CL.aQInven[i] = plr.QInven[i];
     // nanos
     for (int i = 1; i < SIZEOF_NANO_BANK_SLOT; i++) {
         response.PCLoadData2CL.aNanoBank[i] = plr.Nanos[i];
@@ -232,8 +269,28 @@ void PlayerManager::enterPlayer(CNSocket* sock, CNPacketData* data) {
     for (int i = 0; i < 3; i++) {
         response.PCLoadData2CL.aNanoSlots[i] = plr.equippedNanos[i];
     }
+    //missions in progress
+    for (int i = 0; i < ACTIVE_MISSION_COUNT; i++) {
+        if (plr.tasks[i] == 0)
+            break;
+        response.PCLoadData2CL.aRunningQuest[i].m_aCurrTaskID = plr.tasks[i];
+        TaskData &task = *MissionManager::Tasks[plr.tasks[i]];
+        for (int j = 0; j < 3; j++) {
+            response.PCLoadData2CL.aRunningQuest[i].m_aKillNPCID[j] = (int)task["m_iCSUEnemyID"][j];
+            response.PCLoadData2CL.aRunningQuest[i].m_aKillNPCCount[j] = plr.RemainingNPCCount[i][j];
+            /*
+             * client doesn't care about NeededItem ID and Count,
+             * it gets Count from Quest Inventory
+             * 
+             * KillNPCCount sets RemainEnemyNum in the client
+             * Yes, this is extraordinary stupid.
+            */
+        }
+    }
+    response.PCLoadData2CL.iCurrentMissionID = plr.CurrentMissionID;
 
-    // missions
+    // completed missions
+    // the packet requires 32 items, but the client only checks the first 16 (shrug)
     for (int i = 0; i < 16; i++) {
         response.PCLoadData2CL.aQuestFlag[i] = plr.aQuestFlag[i];
     }
@@ -257,6 +314,8 @@ void PlayerManager::enterPlayer(CNSocket* sock, CNPacketData* data) {
     sock->sendPacket((void*)&motd, P_FE2CL_PC_MOTD_LOGIN, sizeof(sP_FE2CL_PC_MOTD_LOGIN));
 
     addPlayer(sock, plr);
+    //check if there is an expiring vehicle
+    ItemManager::checkItemExpire(sock, getPlayer(sock));
 }
 
 void PlayerManager::sendToViewable(CNSocket* sock, void* buf, uint32_t type, size_t size) {
@@ -297,7 +356,7 @@ void PlayerManager::movePlayer(CNSocket* sock, CNPacketData* data) {
 
     sP_CL2FE_REQ_PC_MOVE* moveData = (sP_CL2FE_REQ_PC_MOVE*)data->buf;
     updatePlayerPosition(sock, moveData->iX, moveData->iY, moveData->iZ, moveData->iAngle);
-
+    
     players[sock].plr->angle = moveData->iAngle;
     uint64_t tm = getTime();
 
@@ -495,6 +554,37 @@ void PlayerManager::movePlatformPlayer(CNSocket* sock, CNPacketData* data) {
     sendToViewable(sock, (void*)&platResponse, P_FE2CL_PC_MOVEPLATFORM, sizeof(sP_FE2CL_PC_MOVEPLATFORM));
 }
 
+void PlayerManager::moveSliderPlayer(CNSocket* sock, CNPacketData* data) {
+    if (data->size != sizeof(sP_CL2FE_REQ_PC_MOVETRANSPORTATION))
+        return; // ignore the malformed packet
+
+    sP_CL2FE_REQ_PC_MOVETRANSPORTATION* sliderData = (sP_CL2FE_REQ_PC_MOVETRANSPORTATION*)data->buf;
+    updatePlayerPosition(sock, sliderData->iX, sliderData->iY, sliderData->iZ, sliderData->iAngle);
+
+    uint64_t tm = getTime();
+
+    INITSTRUCT(sP_FE2CL_PC_MOVETRANSPORTATION, sliderResponse);
+
+    sliderResponse.iPC_ID = players[sock].plr->iID;
+    sliderResponse.iCliTime = sliderData->iCliTime;
+    sliderResponse.iSvrTime = tm;
+    sliderResponse.iX = sliderData->iX;
+    sliderResponse.iY = sliderData->iY;
+    sliderResponse.iZ = sliderData->iZ;
+    sliderResponse.iAngle = sliderData->iAngle;
+    sliderResponse.fVX = sliderData->fVX;
+    sliderResponse.fVY = sliderData->fVY;
+    sliderResponse.fVZ = sliderData->fVZ;
+    sliderResponse.iLcX = sliderData->iLcX;
+    sliderResponse.iLcY = sliderData->iLcY;
+    sliderResponse.iLcZ = sliderData->iLcZ;
+    sliderResponse.iSpeed = sliderData->iSpeed;
+    sliderResponse.cKeyValue = sliderData->cKeyValue;
+    sliderResponse.iT_ID = sliderData->iT_ID;
+
+    sendToViewable(sock, (void*)&sliderResponse, P_FE2CL_PC_MOVETRANSPORTATION, sizeof(sP_FE2CL_PC_MOVETRANSPORTATION));
+}
+
 void PlayerManager::moveSlopePlayer(CNSocket* sock, CNPacketData* data) {
     if (data->size != sizeof(sP_CL2FE_REQ_PC_SLOPE))
         return; // ignore the malformed packet
@@ -662,7 +752,7 @@ void PlayerManager::revivePlayer(CNSocket* sock, CNPacketData* data) {
 void PlayerManager::enterPlayerVehicle(CNSocket* sock, CNPacketData* data) {
     PlayerView& plr = PlayerManager::players[sock];
 
-    if (plr.plr->Equip[8].iID > 0) {
+    if (plr.plr->Equip[8].iID > 0 && plr.plr->Equip[8].iTimeLimit>getTimestamp()) {
         INITSTRUCT(sP_FE2CL_PC_VEHICLE_ON_SUCC, response);
         sock->sendPacket((void*)&response, P_FE2CL_PC_VEHICLE_ON_SUCC, sizeof(sP_FE2CL_PC_VEHICLE_ON_SUCC));
 
@@ -680,6 +770,14 @@ void PlayerManager::enterPlayerVehicle(CNSocket* sock, CNPacketData* data) {
     } else {
         INITSTRUCT(sP_FE2CL_PC_VEHICLE_ON_FAIL, response);
         sock->sendPacket((void*)&response, P_FE2CL_PC_VEHICLE_ON_FAIL, sizeof(sP_FE2CL_PC_VEHICLE_ON_FAIL));
+
+        // check if vehicle didn't expire
+        if (plr.plr->Equip[8].iTimeLimit < getTimestamp())
+        {
+            plr.plr->toRemoveVehicle.eIL = 0;
+            plr.plr->toRemoveVehicle.iSlotNum = 8;
+            ItemManager::checkItemExpire(sock, plr.plr);
+        }
     }
 }
 
@@ -719,8 +817,20 @@ void PlayerManager::changePlayerGuide(CNSocket *sock, CNPacketData *data) {
     resp.iMentor = pkt->iMentor;
     resp.iMentorCnt = 1;
     resp.iFusionMatter = plr->fusionmatter; // no cost
-
+    
     sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_CHANGE_MENTOR_SUCC, sizeof(sP_FE2CL_REP_PC_CHANGE_MENTOR_SUCC));
+    // if it's changed from computress
+    if (plr->mentor == 5) {
+        // we're warping to the past
+        plr->PCStyle2.iPayzoneFlag = 1;
+        // remove all active missions
+        for (int i = 0; i < ACTIVE_MISSION_COUNT; i++) {
+            if (plr->tasks[i] != 0)
+                MissionManager::quitTask(sock, plr->tasks[i]);
+        }
+    }
+    // save it on player
+    plr->mentor = pkt->iMentor;
 }
 
 #pragma region Helper methods

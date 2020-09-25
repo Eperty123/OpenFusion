@@ -2,6 +2,7 @@
 #include "CNStructs.hpp"
 #include "ItemManager.hpp"
 #include "PlayerManager.hpp"
+#include "NanoManager.hpp"
 #include "Player.hpp"
 
 #include <string.h> // for memset() and memcmp()
@@ -15,6 +16,8 @@ void ItemManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_ITEM_MOVE, itemMoveHandler);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_ITEM_DELETE, itemDeleteHandler);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_GIVE_ITEM, itemGMGiveHandler);
+    //this one is for gumballs
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_ITEM_USE, itemUseHandler);
     // Bank
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_BANK_OPEN, itemBankOpenHandler);
     // Trade handlers
@@ -69,6 +72,9 @@ void ItemManager::itemMoveHandler(CNSocket* sock, CNPacketData* data) {
         case SlotType::BANK:
             fromItem = &plr.plr->Bank[itemmove->iFromSlotNum];
             break;
+        default:
+            std::cout << "[WARN] MoveItem submitted unknown Item Type?! " << itemmove->eFrom << std::endl;
+            return;
     }
 
     // get the toItem
@@ -83,6 +89,9 @@ void ItemManager::itemMoveHandler(CNSocket* sock, CNPacketData* data) {
     case SlotType::BANK:
         toItem = &plr.plr->Bank[itemmove->iToSlotNum];
         break;
+    default:
+        std::cout << "[WARN] MoveItem submitted unknown Item Type?! " << itemmove->eTo << std::endl;
+        return;
     }
 
     // save items to response
@@ -152,11 +161,10 @@ void ItemManager::itemGMGiveHandler(CNSocket* sock, CNPacketData* data) {
     sP_CL2FE_REQ_PC_GIVE_ITEM* itemreq = (sP_CL2FE_REQ_PC_GIVE_ITEM*)data->buf;
     PlayerView& plr = PlayerManager::players[sock];
 
-    // Commented and disabled for future use
-    //if (!plr.plr->IsGM) {
+    if (plr.plr->accountLevel > 50) {
     	// TODO: send fail packet
-    //    return;
-    //}
+        return;
+    }
 
     if (itemreq->eIL == 2) {
         // Quest item, not a real item, handle this later, stubbed for now
@@ -179,6 +187,60 @@ void ItemManager::itemGMGiveHandler(CNSocket* sock, CNPacketData* data) {
 
         sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_GIVE_ITEM_SUCC, sizeof(sP_FE2CL_REP_PC_GIVE_ITEM_SUCC));
     }
+}
+
+void ItemManager::itemUseHandler(CNSocket* sock, CNPacketData* data) {
+    if (data->size != sizeof(sP_CL2FE_REQ_ITEM_USE))
+        return; // ignore the malformed packet
+    sP_CL2FE_REQ_ITEM_USE* request = (sP_CL2FE_REQ_ITEM_USE*)data->buf;
+    Player* player = PlayerManager::getPlayer(sock);
+
+    //gumball can only be used from inventory, so we ignore eIL
+    sItemBase gumball = player->Inven[request->iSlotNum];
+    sNano nano = player->Nanos[player->equippedNanos[request->iNanoSlot]];
+
+    //sanity check, check if gumball exists
+    if (!(gumball.iOpt > 0 && gumball.iType == 7 && gumball.iID>=119 && gumball.iID<=121)) {
+        std::cout << "[WARN] Gumball not found" << std::endl;
+        INITSTRUCT(sP_FE2CL_REP_PC_ITEM_USE_FAIL, response);
+        sock->sendPacket((void*)&response, P_FE2CL_REP_PC_ITEM_USE_FAIL, sizeof(sP_FE2CL_REP_PC_ITEM_USE_FAIL));
+        return;
+    }
+
+    //sanity check, check if gumball type matches nano style
+    int nanoStyle = NanoManager::nanoStyle(nano.iID);
+    if (!((gumball.iID == 119 && nanoStyle == 0) ||
+        (  gumball.iID == 120 && nanoStyle == 1) ||
+        (  gumball.iID == 121 && nanoStyle == 2))) {
+        std::cout << "[WARN] Gumball type doesn't match nano type" << std::endl;
+        INITSTRUCT(sP_FE2CL_REP_PC_ITEM_USE_FAIL, response);
+        sock->sendPacket((void*)&response, P_FE2CL_REP_PC_ITEM_USE_FAIL, sizeof(sP_FE2CL_REP_PC_ITEM_USE_FAIL));
+        return;
+    }
+
+    gumball.iOpt -= 1;
+    if (gumball.iOpt == 0)
+        gumball = {};
+
+    INITSTRUCT(sP_FE2CL_REP_PC_ITEM_USE_SUCC, response);
+    response.iPC_ID = player->iID;
+    response.eIL = 1;
+    response.iSlotNum = request->iSlotNum;
+    response.RemainItem = gumball;
+   // response.iTargetCnt = ?
+   // response.eST = ?
+   // response.iSkillID = ?
+
+    sock->sendPacket((void*)&response, P_FE2CL_REP_PC_ITEM_USE_SUCC, sizeof(sP_FE2CL_REP_PC_ITEM_USE_SUCC));
+    //update inventory serverside
+    player->Inven[response.iSlotNum] = response.RemainItem;
+
+    //this is a temporary way of calling buff efect
+    //TODO: send buff data via response packet
+    int value1 = CSB_BIT_STIMPAKSLOT1 << request->iNanoSlot;
+    int value2 = ECSB_STIMPAKSLOT1 + request->iNanoSlot;
+
+    NanoManager::nanoBuff(sock, nano.iID, 144, EST_NANOSTIMPAK, value1, value2, 0);
 }
 
 void ItemManager::itemBankOpenHandler(CNSocket* sock, CNPacketData* data) {
@@ -761,4 +823,39 @@ Item* ItemManager::getItemData(int32_t id, int32_t type) {
     if(ItemData.find(std::pair<int32_t, int32_t>(id, type)) !=  ItemData.end())
         return &ItemData[std::pair<int32_t, int32_t>(id, type)];
     return nullptr;
+}
+
+void ItemManager::checkItemExpire(CNSocket* sock, Player* player) {
+    if (player->toRemoveVehicle.eIL == 0 && player->toRemoveVehicle.iSlotNum == 0)
+        return;
+
+    /* prepare packet
+    * yes, this is a varadic packet, however analyzing client behavior and code
+    * it only checks takes the first item sent into account
+    * yes, this is very stupid
+    * therefore, we delete all but 1 expired vehicle while loading player
+    * to delete the last one here so player gets a notification
+    */
+
+    const size_t resplen = sizeof(sP_FE2CL_PC_DELETE_TIME_LIMIT_ITEM) + sizeof(sTimeLimitItemDeleteInfo2CL);
+    assert(resplen < CN_PACKET_BUFFER_SIZE - 8);
+    // we know it's only one trailing struct, so we can skip full validation
+    uint8_t respbuf[resplen]; // not a variable length array, don't worry   
+    sP_FE2CL_PC_DELETE_TIME_LIMIT_ITEM* packet = (sP_FE2CL_PC_DELETE_TIME_LIMIT_ITEM*)respbuf;
+    sTimeLimitItemDeleteInfo2CL* itemData = (sTimeLimitItemDeleteInfo2CL*)(respbuf + sizeof(sP_FE2CL_PC_DELETE_TIME_LIMIT_ITEM));
+    memset(respbuf, 0, resplen);
+
+    packet->iItemListCount = 1;
+    itemData->eIL = player->toRemoveVehicle.eIL;
+    itemData->iSlotNum = player->toRemoveVehicle.iSlotNum;
+    sock->sendPacket((void*)&respbuf, P_FE2CL_PC_DELETE_TIME_LIMIT_ITEM, resplen);
+    
+    // delete serverside
+    if (player->toRemoveVehicle.eIL == 0)
+        memset(&player->Equip[8], 0, sizeof(sItemBase));
+    else
+        memset(&player->Inven[player->toRemoveVehicle.iSlotNum], 0, sizeof(sItemBase));
+
+    player->toRemoveVehicle.eIL = 0;
+    player->toRemoveVehicle.iSlotNum = 0;
 }

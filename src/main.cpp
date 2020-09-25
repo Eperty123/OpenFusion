@@ -8,6 +8,7 @@
 #include "NanoManager.hpp"
 #include "NPCManager.hpp"
 #include "TransportManager.hpp"
+#include "BuddyManager.hpp"
 #include "Database.hpp"
 #include "TableData.hpp"
 #include "ChunkManager.hpp"
@@ -49,9 +50,6 @@ void terminate(int arg) {
         shardThread->join();
     }
 
-    TableData::cleanup();
-    ChunkManager::cleanup();
-
     exit(0);
 }
 
@@ -86,6 +84,7 @@ int main() {
 #else
     initsignals();
 #endif
+    srand(getTime());
     settings::init();
     std::cout << "[INFO] OpenFusion v" GIT_VERSION << std::endl;
     std::cout << "[INFO] Protocol version: " << PROTOCOL_VERSION << std::endl;
@@ -99,6 +98,7 @@ int main() {
     NanoManager::init();
     NPCManager::init();
     TransportManager::init();
+    BuddyManager::init();
 
     Database::open();
 
@@ -146,6 +146,15 @@ time_t getTime() {
     using namespace std::chrono;
 
     milliseconds value = duration_cast<milliseconds>((time_point_cast<milliseconds>(high_resolution_clock::now())).time_since_epoch());
+
+    return (time_t)value.count();
+}
+
+// returns system time in seconds
+time_t getTimestamp() {
+    using namespace std::chrono;
+
+    seconds value = duration_cast<seconds>((time_point_cast<seconds>(system_clock::now())).time_since_epoch());
 
     return (time_t)value.count();
 }

@@ -12,8 +12,8 @@ int settings::DBSAVEINTERVAL = 240;
 int settings::SHARDPORT = 8002;
 std::string settings::SHARDSERVERIP = "127.0.0.1";
 time_t settings::TIMEOUT = 60000;
-int settings::PLAYERDISTANCE = 20000;
-int settings::NPCDISTANCE = 16000;
+int settings::CHUNKSIZE = 40000;
+bool settings::SIMULATEMOBS = true;
 
 // default spawn point is Sector V (future)
 int settings::SPAWN_X = 632032;
@@ -23,8 +23,9 @@ int settings::SPAWN_ANGLE = 130;
 std::string settings::NPCJSON = "tdata/NPCs.json";
 std::string settings::XDTJSON = "tdata/xdt.json";
 std::string settings::MOBJSON = "tdata/mobs.json";
+std::string settings::PATHJSON = "tdata/paths.json";
 std::string settings::MOTDSTRING = "Welcome to OpenFusion!";
-bool settings::GM = true;
+int settings::ACCLEVEL = 1;
 
 void settings::init() {
     INIReader reader("config.ini");
@@ -43,10 +44,10 @@ void settings::init() {
     LOGINPORT = reader.GetInteger("login", "port", LOGINPORT);
     SHARDPORT = reader.GetInteger("shard", "port", SHARDPORT);
     SHARDSERVERIP = reader.Get("shard", "ip", "127.0.0.1");
-    DBSAVEINTERVAL = reader.GetInteger("login", "dbsaveinterval", DBSAVEINTERVAL);
+    DBSAVEINTERVAL = reader.GetInteger("shard", "dbsaveinterval", DBSAVEINTERVAL);
     TIMEOUT = reader.GetInteger("shard", "timeout", TIMEOUT);
-    PLAYERDISTANCE = reader.GetInteger("shard", "playerdistance", PLAYERDISTANCE);
-    NPCDISTANCE = reader.GetInteger("shard", "npcdistance", NPCDISTANCE);
+    CHUNKSIZE = reader.GetInteger("shard", "chunksize", CHUNKSIZE);
+    SIMULATEMOBS = reader.GetBoolean("shard", "simulatemobs", SIMULATEMOBS);
     SPAWN_X = reader.GetInteger("shard", "spawnx", SPAWN_X);
     SPAWN_Y = reader.GetInteger("shard", "spawny", SPAWN_Y);
     SPAWN_Z = reader.GetInteger("shard", "spawnz", SPAWN_Z);
@@ -54,6 +55,7 @@ void settings::init() {
     NPCJSON = reader.Get("shard", "npcdata", NPCJSON);
     XDTJSON = reader.Get("shard", "xdtdata", XDTJSON);
     MOBJSON = reader.Get("shard", "mobdata", MOBJSON);
+    PATHJSON = reader.Get("shard", "pathdata", PATHJSON);
     MOTDSTRING = reader.Get("shard", "motd", MOTDSTRING);
-    GM = reader.GetBoolean("shard", "gm", GM);
+    ACCLEVEL = reader.GetInteger("shard", "accountlevel", ACCLEVEL);
 }

@@ -12,6 +12,7 @@
 
 struct Player {
     int accountId;
+    int accountLevel; // permission level (see CN_ACCOUNT_LEVEL enums)
     int64_t SerialKey;
     int32_t iID;
     uint64_t FEKey;
@@ -19,6 +20,7 @@ struct Player {
     int level;
     int HP;
     int slot; // player slot, not nano slot
+    int16_t mentor;
     int32_t money;
     int32_t fusionmatter;
     int32_t batteryW;
@@ -41,9 +43,12 @@ struct Player {
     int32_t moneyInTrade;
     bool isTrading;
     bool isTradeConfirm;
-    bool IsGM;
 
     int64_t aQuestFlag[16];
     int tasks[ACTIVE_MISSION_COUNT];
+    int RemainingNPCCount[ACTIVE_MISSION_COUNT][3];
     sItemBase QInven[AQINVEN_COUNT];
+    int32_t CurrentMissionID;
+
+    sTimeLimitItemDeleteInfo2CL toRemoveVehicle;
 };

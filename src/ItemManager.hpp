@@ -31,6 +31,7 @@ namespace ItemManager {
     void itemMoveHandler(CNSocket* sock, CNPacketData* data);
     void itemDeleteHandler(CNSocket* sock, CNPacketData* data);
     void itemGMGiveHandler(CNSocket* sock, CNPacketData* data);
+    void itemUseHandler(CNSocket* sock, CNPacketData* data);
     // Bank
     void itemBankOpenHandler(CNSocket* sock, CNPacketData* data);
     void itemTradeOfferHandler(CNSocket* sock, CNPacketData* data);
@@ -47,4 +48,5 @@ namespace ItemManager {
 
     int findFreeSlot(Player *plr);
     Item* getItemData(int32_t id, int32_t type);
+    void checkItemExpire(CNSocket* sock, Player* player);
 }
