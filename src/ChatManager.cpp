@@ -13,7 +13,7 @@ void ChatManager::chatHandler(CNSocket* sock, CNPacketData* data) {
     if (data->size != sizeof(sP_CL2FE_REQ_SEND_FREECHAT_MESSAGE))
         return; // malformed packet
     sP_CL2FE_REQ_SEND_FREECHAT_MESSAGE* chat = (sP_CL2FE_REQ_SEND_FREECHAT_MESSAGE*)data->buf;
-    PlayerView plr = PlayerManager::players[sock];
+    PlayerView& plr = PlayerManager::players[sock];
 
     // send to client
     INITSTRUCT(sP_FE2CL_REP_SEND_FREECHAT_MESSAGE_SUCC, resp);
@@ -23,15 +23,13 @@ void ChatManager::chatHandler(CNSocket* sock, CNPacketData* data) {
     sock->sendPacket((void*)&resp, P_FE2CL_REP_SEND_FREECHAT_MESSAGE_SUCC, sizeof(sP_FE2CL_REP_SEND_FREECHAT_MESSAGE_SUCC));
 
     // send to visible players
-    for (CNSocket* otherSock : plr.viewable) {
-        otherSock->sendPacket((void*)&resp, P_FE2CL_REP_SEND_FREECHAT_MESSAGE_SUCC, sizeof(sP_FE2CL_REP_SEND_FREECHAT_MESSAGE_SUCC));
-    }
+    PlayerManager::sendToViewable(sock, (void*)&resp, P_FE2CL_REP_SEND_FREECHAT_MESSAGE_SUCC, sizeof(sP_FE2CL_REP_SEND_FREECHAT_MESSAGE_SUCC));
 }
+
 void ChatManager::menuChatHandler(CNSocket* sock, CNPacketData* data) {
     if (data->size != sizeof(sP_CL2FE_REQ_SEND_MENUCHAT_MESSAGE))
         return; // malformed packet
     sP_CL2FE_REQ_SEND_MENUCHAT_MESSAGE* chat = (sP_CL2FE_REQ_SEND_MENUCHAT_MESSAGE*)data->buf;
-    PlayerView plr = PlayerManager::players[sock];
 
     // send to client
     INITSTRUCT(sP_FE2CL_REP_SEND_MENUCHAT_MESSAGE_SUCC, resp);
@@ -41,10 +39,9 @@ void ChatManager::menuChatHandler(CNSocket* sock, CNPacketData* data) {
     sock->sendPacket((void*)&resp, P_FE2CL_REP_SEND_MENUCHAT_MESSAGE_SUCC, sizeof(sP_FE2CL_REP_SEND_MENUCHAT_MESSAGE_SUCC));
 
     // send to visible players
-    for (CNSocket* otherSock : plr.viewable) {
-        otherSock->sendPacket((void*)&resp, P_FE2CL_REP_SEND_MENUCHAT_MESSAGE_SUCC, sizeof(sP_FE2CL_REP_SEND_MENUCHAT_MESSAGE_SUCC));
-    }
+    PlayerManager::sendToViewable(sock, (void*)&resp, P_FE2CL_REP_SEND_MENUCHAT_MESSAGE_SUCC, sizeof(sP_FE2CL_REP_SEND_MENUCHAT_MESSAGE_SUCC));
 }
+
 void ChatManager::emoteHandler(CNSocket* sock, CNPacketData* data) {
     if (data->size != sizeof(sP_CL2FE_REQ_PC_AVATAR_EMOTES_CHAT))
         return; // ignore the malformed packet
@@ -52,8 +49,8 @@ void ChatManager::emoteHandler(CNSocket* sock, CNPacketData* data) {
     // you can dance with friends!!!!!!!!
 
     sP_CL2FE_REQ_PC_AVATAR_EMOTES_CHAT* emote = (sP_CL2FE_REQ_PC_AVATAR_EMOTES_CHAT*)data->buf;
-    PlayerView plr = PlayerManager::players[sock];
-    
+    PlayerView& plr = PlayerManager::players[sock];
+
     // send to client
     INITSTRUCT(sP_FE2CL_REP_PC_AVATAR_EMOTES_CHAT, resp);
     resp.iEmoteCode = emote->iEmoteCode;
@@ -61,7 +58,5 @@ void ChatManager::emoteHandler(CNSocket* sock, CNPacketData* data) {
     sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_AVATAR_EMOTES_CHAT, sizeof(sP_FE2CL_REP_PC_AVATAR_EMOTES_CHAT));
 
     // send to visible players (players within render distance)
-    for (CNSocket* otherSock : plr.viewable) {
-        otherSock->sendPacket((void*)&resp, P_FE2CL_REP_PC_AVATAR_EMOTES_CHAT, sizeof(sP_FE2CL_REP_PC_AVATAR_EMOTES_CHAT));
-    }
+    PlayerManager::sendToViewable(sock, (void*)&resp, P_FE2CL_REP_PC_AVATAR_EMOTES_CHAT, sizeof(sP_FE2CL_REP_PC_AVATAR_EMOTES_CHAT));
 }

@@ -4,15 +4,19 @@
 #include "CNProtocol.hpp"
 #include "CNStructs.hpp"
 #include "CNShardServer.hpp"
+#include "ChunkManager.hpp"
 
+#include <utility>
 #include <map>
 #include <list>
 
+struct WarpLocation;
+
 struct PlayerView {
-    std::list<CNSocket*> viewable;
-    std::list<int32_t> viewableNPCs;
+    std::pair<int, int> chunkPos;
+    std::vector<Chunk*> currentChunks;
     Player *plr;
-    uint64_t lastHeartbeat;
+    time_t lastHeartbeat;
 };
 
 
@@ -22,10 +26,14 @@ namespace PlayerManager {
 
     void addPlayer(CNSocket* key, Player plr);
     void removePlayer(CNSocket* key);
-    Player *getPlayer(CNSocket* key);
+
+    void removePlayerFromChunks(std::vector<Chunk*> chunks, CNSocket* sock);
+    void addPlayerToChunks(std::vector<Chunk*> chunks, CNSocket* sock);
 
     void updatePlayerPosition(CNSocket* sock, int X, int Y, int Z);
-    std::list<CNSocket*> getNearbyPlayers(int X, int Y, int dist);
+    void updatePlayerPosition(CNSocket* sock, int X, int Y, int Z, int angle);
+
+    void sendToViewable(CNSocket* sock, void* buf, uint32_t type, size_t size);
 
     void enterPlayer(CNSocket* sock, CNPacketData* data);
     void loadPlayer(CNSocket* sock, CNPacketData* data);
@@ -44,7 +52,14 @@ namespace PlayerManager {
     void exitGame(CNSocket* sock, CNPacketData* data);
 
     void setSpecialSwitchPlayer(CNSocket* sock, CNPacketData* data);
+    void changePlayerGuide(CNSocket *sock, CNPacketData *data);
 
     void enterPlayerVehicle(CNSocket* sock, CNPacketData* data);
     void exitPlayerVehicle(CNSocket* sock, CNPacketData* data);
+
+    Player *getPlayer(CNSocket* key);
+    WarpLocation getRespawnPoint(Player *plr);
+
+    bool isAccountInUse(int accountId);
+    void exitDuplicate(int accountId);
 }

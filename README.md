@@ -11,12 +11,12 @@ Further documentation pending.
 
 tl;dr:
 
-1. Download the client+server bundle from [here](https://github.com/OpenFusionProject/OpenFusion/releases/download/1.0/OpenFusion.zip).
+1. Download the client+server bundle from [here](https://github.com/OpenFusionProject/OpenFusion/releases/download/1.1/OpenFusion.zip).
 2. Run `FreeClient/installUnity.bat` once
 
 From then on, any time you want to run the "game":
 
-3. Run `OpenFusionRelease/winfusion.exe`
+3. Run `Server/winfusion.exe`
 4. Run `FreeClient/OpenFusionClient.exe`
 
 Currently the client by default connects to a public server hosted by Cake. Change the loginInfo.php to point to your own server if you want to host your own.
@@ -24,7 +24,7 @@ Currently the client by default connects to a public server hosted by Cake. Chan
 You have two randomized characters available to you on the Character Selection screen, one boy, one girl.
 You can also make your own character and play through the tutorial. The tutorial can be skipped by pressing the ~ key.
 
-If you want, [compiled binaries (artifacts) for each new commit can be found on AppVeyor.](https://ci.appveyor.com/project/Raymonf/openfusion)
+If you want, [compiled binaries (artifacts) for each new commit can be found on AppVeyor.](https://ci.appveyor.com/project/OpenFusionProject/openfusion)
 
 For a more detailed overview of the game's architecture and how to configure it, read the following sections.
 
@@ -61,7 +61,7 @@ When the player clicks "ENTER THE GAME" (or completes the tutorial), the login s
 
 ## Configuration
 
-You can change the ports the FusionFall server listens on in `OpenFusion/config.ini`. Make sure the login server port is in sync with `loginInfo.php`.
+You can change the ports the FusionFall server listens on in `Server/config.ini`. Make sure the login server port is in sync with `loginInfo.php`.
 The shard port needs no such synchronization.
 You can also configure the distance at which you'll be able to see other players, though by default it's already as high as you'll want it.
 
@@ -70,7 +70,7 @@ This just works if you're all under the same LAN, but if you want to play over t
 
 If you're in a region in which Turner's CDN doesn't still have the game's assets cached, you won't be able to play the game in its default configuration.
 You'll need to obtain the necessary assets elsewhere and set up your own local web server to host them, because unlike web browsers, the game itself cannot interpret the `file://` schema, and will thus need the assets hosted on an actual HTTP server.
-Don't forget to point `assetInfo.php` to where you're hosting the assets and change the `src` param of both the `<embed>` tag and the `<object>` tag in `FreeClient/resources/files/index.html` to where you're hosting the `.unity3d` entrypoint.
+Don't forget to point `assetInfo.php` to where you're hosting the assets and change the `src` param of both the `<embed>` tag and the `<object>` tag in `FreeClient/resources/app/files/index.html` to where you're hosting the `.unity3d` entrypoint.
 
 If you change `loginInfo.php` or `assetInfo.php`, make sure not to put any newline characters (or any other whitespace) at the end of the file(s).
 Some modern IDEs/text editors do this automatically. If all else fails, use Notepad.
@@ -86,6 +86,10 @@ A detailed compilation guide is available for Windows users in the wiki [using M
 ### CMake
 
 A detailed guide is available [in the wiki](https://github.com/OpenFusionProject/OpenFusion/wiki/Compilation-with-CMake-or-Visual-Studio) for people using regular old CMake or the version of CMake that comes with Visual Studio. tl;dr: `cmake -B build`
+
+## Contributing
+
+If you'd like to contribute to this project, please read [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## "Gameplay"
 
@@ -103,11 +107,15 @@ To make your landwalking experience more pleasant, you can make use of a few adm
 * `/goto` is useful for more precise teleportation (ie. for getting into Infected Zones, etc.).
 
 ### Item commands
-* /itemN [type] [itemId] [amount]
+* `/itemN [type] [itemId] [amount]`
   (Refer to the [item list](https://docs.google.com/spreadsheets/d/1mpoJ9iTHl_xLI4wQ_9UvIDYNcsDYscdkyaGizs43TCg/))
 
 ### Nano commands
-* /nano [id] (1-36)
-* /nano_equip [id] (1-36) [slot] (0-2)
-* /nano_unequip [slot] (0-2)
-* /nano_active [slot] (0-2)
+* `/nano [id] (1-36)`
+* `/nano_equip [id] (1-36) [slot] (0-2)`
+* `/nano_unequip [slot] (0-2)`
+* `/nano_active [slot] (0-2)`
+
+## Accounts
+
+A basic account system has been added, when logging in if the username doesn't exist in the database, a new account with the provided password will be made and you'll be automatically logged in. Otherwise a login attempt will be made. A username must be between 4 and 32 characters, and a password must be between 8 and 32 characters otherwise the account will be rejected.

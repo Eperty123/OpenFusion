@@ -1,12 +1,11 @@
 #pragma once
 
-#define MAX_PACKETSIZE 8192
 #define DEBUGLOG(x) if (settings::VERBOSITY) {x};
 
 #include <iostream>
 #include <stdio.h>
 #include <stdint.h>
-#ifdef _WIN32 
+#ifdef _WIN32
 // windows
     #define _WINSOCK_DEPRECATED_NO_WARNINGS
     #include <winsock2.h>
@@ -47,7 +46,7 @@
 
 #if defined(__MINGW32__) && !defined(_GLIBCXX_HAS_GTHREADS)
     #include "mingw/mingw.mutex.h"
-#else 
+#else
     #include <mutex>
 #endif
 
@@ -56,7 +55,8 @@
         [4 bytes] - size of packet including the 4 byte packet type
         [size bytes] - Encrypted packet (byte swapped && xor'd with 8 byte key; see CNSocketEncryption)
             [4 bytes] - packet type (which is a combination of the first 4 bytes of the packet and a checksum in some versions)
-            [structure]
+            [structure] - one member contains length of trailing data (expressed in packet-dependant structures)
+            [trailing data] - optional variable-length data that only some packets make use of
 */
 
 // error checking calloc wrapper
@@ -69,6 +69,42 @@ inline void* xmalloc(size_t sz) {
     }
 
     return res;
+}
+
+// overflow-safe validation of variable-length packets
+// for outbound packets
+inline bool validOutVarPacket(size_t base, int32_t npayloads, size_t plsize) {
+    // check for multiplication overflow
+    if (npayloads > 0 && (CN_PACKET_BUFFER_SIZE - 8) / (size_t)npayloads < plsize)
+        return false;
+
+    // it's safe to multiply
+    size_t trailing = npayloads * plsize;
+
+    // does it fit in a packet?
+    if (base + trailing > CN_PACKET_BUFFER_SIZE - 8)
+        return false;
+
+    // everything is a-ok!
+    return true;
+}
+
+// for inbound packets
+inline bool validInVarPacket(size_t base, int32_t npayloads, size_t plsize, size_t datasize) {
+    // check for multiplication overflow
+    if (npayloads > 0 && (CN_PACKET_BUFFER_SIZE - 8) / (size_t)npayloads < plsize)
+        return false;
+
+    // it's safe to multiply
+    size_t trailing = npayloads * plsize;
+
+    // make sure size is exact
+    // datasize has already been validated against CN_PACKET_BUFFER_SIZE
+    if (datasize != base + trailing)
+        return false;
+
+    // everything is a-ok!
+    return true;
 }
 
 namespace CNSocketEncryption {
@@ -96,6 +132,8 @@ enum ACTIVEKEY {
     SOCKETKEY_FE
 };
 
+struct Player;
+
 class CNSocket;
 typedef void (*PacketHandler)(CNSocket* sock, CNPacketData* data);
 
@@ -104,7 +142,7 @@ private:
     uint64_t EKey;
     uint64_t FEKey;
     int32_t readSize = 0;
-    uint8_t* readBuffer = new uint8_t[MAX_PACKETSIZE];
+    uint8_t readBuffer[CN_PACKET_BUFFER_SIZE];
     int readBufferIndex = 0;
     bool activelyReading = false;
     bool alive = true;
@@ -117,6 +155,7 @@ private:
 public:
     SOCKET sock;
     PacketHandler pHandler;
+    Player *plr = nullptr;
 
     CNSocket(SOCKET s, PacketHandler ph);
 
@@ -133,15 +172,15 @@ public:
 };
 
 class CNServer;
-typedef void (*TimerHandler)(CNServer* serv, uint64_t time);
+typedef void (*TimerHandler)(CNServer* serv, time_t time);
 
 // timer struct
 struct TimerEvent {
     TimerHandler handlr;
-    uint64_t delta; // time to be added to the current time on reset
-    uint64_t scheduledEvent; // time to call handlr()
+    time_t delta; // time to be added to the current time on reset
+    time_t scheduledEvent; // time to call handlr()
 
-    TimerEvent(TimerHandler h, uint64_t d): handlr(h), delta(d) {
+    TimerEvent(TimerHandler h, time_t d): handlr(h), delta(d) {
         scheduledEvent = 0;
     }
 };
@@ -171,5 +210,5 @@ public:
     static void printPacket(CNPacketData *data, int type);
     virtual void newConnection(CNSocket* cns);
     virtual void killConnection(CNSocket* cns);
-    virtual void onStep(); // called every 2 seconds
+    virtual void onStep();
 };
