@@ -9,7 +9,7 @@
 
 std::map<int32_t, Reward*> MissionManager::Rewards;
 std::map<int32_t, TaskData*> MissionManager::Tasks;
-nlohmann::json MissionManager::AvatarGrowth[36];
+nlohmann::json MissionManager::AvatarGrowth[37];
 
 void MissionManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_TASK_START, taskStart);
@@ -18,12 +18,28 @@ void MissionManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_TASK_STOP, quitMission);
 }
 
-bool startTask(Player* plr, int TaskID) {
+bool startTask(Player* plr, int TaskID, bool NanoMission) {
     if (MissionManager::Tasks.find(TaskID) == MissionManager::Tasks.end()) {
         std::cout << "[WARN] Player submitted unknown task!?" << std::endl;
         return false;
     }
     
+    // client freaks out if nano mission isn't sent first after reloging, so it's easiest to set it here
+    if (NanoMission && plr->tasks[0] != 0) {
+            // lets move task0 to different spot
+            int moveToSlot = 1;
+            for (; moveToSlot < ACTIVE_MISSION_COUNT; moveToSlot++)
+                if (plr->tasks[moveToSlot] == 0)
+                    break;
+
+            plr->tasks[moveToSlot] = plr->tasks[0];
+            plr->tasks[0] = 0;
+            for (int i = 0; i < 3; i++) {
+                plr->RemainingNPCCount[moveToSlot][i] = plr->RemainingNPCCount[0][i];
+                plr->RemainingNPCCount[0][i] = 0;
+            }
+    }
+
     TaskData& task = *MissionManager::Tasks[TaskID];
     int i;
     for (i = 0; i < ACTIVE_MISSION_COUNT; i++) {
@@ -51,7 +67,7 @@ void MissionManager::taskStart(CNSocket* sock, CNPacketData* data) {
     INITSTRUCT(sP_FE2CL_REP_PC_TASK_START_SUCC, response);
     Player *plr = PlayerManager::getPlayer(sock);
 
-    if (!startTask(plr, missionData->iTaskNum)) {
+    if (!startTask(plr, missionData->iTaskNum, false)) {
         // TODO: TASK_FAIL?
         response.iTaskNum = missionData->iTaskNum;
         sock->sendPacket((void*)&response, P_FE2CL_REP_PC_TASK_START_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_START_SUCC));
@@ -60,6 +76,18 @@ void MissionManager::taskStart(CNSocket* sock, CNPacketData* data) {
     
     response.iTaskNum = missionData->iTaskNum;
     sock->sendPacket((void*)&response, P_FE2CL_REP_PC_TASK_START_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_START_SUCC));
+
+    // HACK: auto-succeed Eduardo escort task
+    // TODO: maybe check for iTaskType == 6 and skip all escort missions?
+    if (missionData->iTaskNum == 576) {
+        std::cout << "Sending Eduardo success packet" << std::endl;
+        INITSTRUCT(sP_FE2CL_REP_PC_TASK_END_SUCC, response);
+
+        endTask(sock, 576);
+        response.iTaskNum = 576;
+
+        sock->sendPacket((void*)&response, P_FE2CL_REP_PC_TASK_END_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_END_SUCC));
+    }
 }
 
 void MissionManager::taskEnd(CNSocket* sock, CNPacketData* data) {
@@ -68,20 +96,31 @@ void MissionManager::taskEnd(CNSocket* sock, CNPacketData* data) {
 
     sP_CL2FE_REQ_PC_TASK_END* missionData = (sP_CL2FE_REQ_PC_TASK_END*)data->buf;
     INITSTRUCT(sP_FE2CL_REP_PC_TASK_END_SUCC, response);
-    Player *plr = PlayerManager::getPlayer(sock);
 
     response.iTaskNum = missionData->iTaskNum;
-    //std::cout << missionData->iTaskNum << std::endl;
 
-    if (Tasks.find(missionData->iTaskNum) == Tasks.end()) {
-        std::cout << "[WARN] Player submitted unknown task!?" << std::endl;
-        // TODO: TASK_FAIL?
-        sock->sendPacket((void*)&response, P_FE2CL_REP_PC_TASK_END_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_END_SUCC));
+    if (!endTask(sock, missionData->iTaskNum)) {
         return;
     }
 
+    sock->sendPacket((void*)&response, P_FE2CL_REP_PC_TASK_END_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_END_SUCC));
+}
+
+bool MissionManager::endTask(CNSocket *sock, int32_t taskNum) {
+    Player *plr = PlayerManager::getPlayer(sock);
+
+    if (Tasks.find(taskNum) == Tasks.end())
+        return false;
+
     // ugly pointer/reference juggling for the sake of operator overloading...
-    TaskData& task = *Tasks[missionData->iTaskNum];
+    TaskData& task = *Tasks[taskNum];
+
+    // mission rewards
+    if (Rewards.find(taskNum) != Rewards.end()) {
+        if (giveMissionReward(sock, taskNum) == -1)
+            return false; // we don't want to send anything
+    }
+    // don't take away quest items if we haven't finished the quest
 
     /*
      * Give (or take away) quest items
@@ -98,18 +137,12 @@ void MissionManager::taskEnd(CNSocket* sock, CNPacketData* data) {
 
     for (int i = 0; i < 3; i++)
         if (task["m_iSUItem"][i] != 0)
-            dropQuestItem(sock, missionData->iTaskNum, task["m_iSUInstancename"][i], task["m_iSUItem"][i], 0);
-
-    // mission rewards
-    if (Rewards.find(missionData->iTaskNum) != Rewards.end()) {
-        if (giveMissionReward(sock, missionData->iTaskNum) == -1)
-            return;
-    }
+            dropQuestItem(sock, taskNum, task["m_iSUInstancename"][i], task["m_iSUItem"][i], 0);
 
     // update player
     int i;
     for (i = 0; i < ACTIVE_MISSION_COUNT; i++) {
-        if (plr->tasks[i] == missionData->iTaskNum)
+        if (plr->tasks[i] == taskNum)
         {
             plr->tasks[i] = 0;
             for (int j = 0; j < 3; j++) {
@@ -129,14 +162,16 @@ void MissionManager::taskEnd(CNSocket* sock, CNPacketData* data) {
 
         // if it's a nano mission, reward the nano.
         if (task["m_iSTNanoID"] != 0) {
-            NanoManager::addNano(sock, task["m_iSTNanoID"], 0);
+            NanoManager::addNano(sock, task["m_iSTNanoID"], 0, true);
+            // check if the player already has enough fm for the next mission
+            updateFusionMatter(sock, 0);
         }
 
         // remove current mission
         plr->CurrentMissionID = 0;
     }
 
-    sock->sendPacket((void*)&response, P_FE2CL_REP_PC_TASK_END_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_END_SUCC));
+    return true;
 }
 
 void MissionManager::setMission(CNSocket* sock, CNPacketData* data) {
@@ -201,7 +236,6 @@ void MissionManager::quitTask(CNSocket* sock, int32_t taskNum) {
     sock->sendPacket((void*)&response, P_FE2CL_REP_PC_TASK_STOP_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_STOP_SUCC));
 }
 
-// TODO: coalesce into ItemManager::findFreeSlot()?
 int MissionManager::findQSlot(Player *plr, int id) {
     int i;
 
@@ -306,7 +340,7 @@ int MissionManager::giveMissionReward(CNSocket *sock, int task) {
 
     // update player
     plr->money += reward->money;
-    MissionManager::updateFusionMatter(sock, reward->fusionmatter);
+    updateFusionMatter(sock, reward->fusionmatter);
 
     // simple rewards
     resp->m_iCandy = plr->money;
@@ -335,24 +369,33 @@ void MissionManager::updateFusionMatter(CNSocket* sock, int fusion) {
 
     plr->fusionmatter += fusion;
 
-    // check if it is over the limit
-    if (plr->fusionmatter > AvatarGrowth[plr->level]["m_iReqBlob_NanoCreate"]) {
-        // check if the nano task is already started
+    // there's a much lower FM cap in the Future
+    if (plr->fusionmatter > AvatarGrowth[plr->level]["m_iFMLimit"])
+        plr->fusionmatter = AvatarGrowth[plr->level]["m_iFMLimit"];
+    else if (plr->fusionmatter < 0) // if somehow lowered too far
+        plr->fusionmatter = 0;
 
-        for (int i = 0; i < ACTIVE_MISSION_COUNT; i++) {
-            TaskData& task = *Tasks[plr->tasks[i]];
-            if (task["m_iSTNanoID"] != 0)
-                return; // nano mission was already started!
-        }
-
-        // start the nano mission
-        startTask(plr, AvatarGrowth[plr->level]["m_iNanoQuestTaskID"]);
-
-        INITSTRUCT(sP_FE2CL_REP_PC_TASK_START_SUCC, response);
-        response.iTaskNum = AvatarGrowth[plr->level]["m_iNanoQuestTaskID"];
-        sock->sendPacket((void*)&response, P_FE2CL_REP_PC_TASK_START_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_START_SUCC));
+    // check if it is enough for the nano mission
+    if (plr->fusionmatter <= AvatarGrowth[plr->level]["m_iReqBlob_NanoCreate"])
         return;
+
+    // don't give the Blossom nano mission until the player's in the Past
+    if (plr->level == 4 && plr->PCStyle2.iPayzoneFlag == 0)
+        return;
+
+    // check if the nano task is already started
+    for (int i = 0; i < ACTIVE_MISSION_COUNT; i++) {
+        TaskData& task = *Tasks[plr->tasks[i]];
+        if (task["m_iSTNanoID"] != 0)
+            return; // nano mission was already started!
     }
+
+    // start the nano mission
+    startTask(plr, AvatarGrowth[plr->level]["m_iNanoQuestTaskID"], true);
+
+    INITSTRUCT(sP_FE2CL_REP_PC_TASK_START_SUCC, response);
+    response.iTaskNum = AvatarGrowth[plr->level]["m_iNanoQuestTaskID"];
+    sock->sendPacket((void*)&response, P_FE2CL_REP_PC_TASK_START_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_START_SUCC));
 }
 
 void MissionManager::mobKilled(CNSocket *sock, int mobid) {
@@ -414,7 +457,7 @@ void MissionManager::saveMission(Player* player, int missionId) {
         return;
     }
 
-    // Missions are stored in int_64t array
+    // Missions are stored in int64_t array
     int row = missionId / 64;
     int column = missionId % 64;
     player->aQuestFlag[row] |= (1ULL << column);

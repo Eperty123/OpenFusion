@@ -128,7 +128,7 @@ void TableData::init() {
         
         nlohmann::json growth = xdtData["m_pAvatarTable"]["m_pAvatarGrowData"];
 
-        for (int i = 0; i < 36; i++) {
+        for (int i = 0; i < 37; i++) {
             MissionManager::AvatarGrowth[i] = growth[i];
         }
 
@@ -199,8 +199,8 @@ void TableData::init() {
 }
 
 /*
-* Some item categories either don't possess iEquipLoc or use a different value for item type.
-*/
+ * Some item categories either don't possess iEquipLoc or use a different value for item type.
+ */
 int TableData::getItemType(int itemSet) {
     int overriden;
     switch (itemSet)

@@ -38,7 +38,7 @@ struct TaskData {
 namespace MissionManager {
     extern std::map<int32_t, Reward*> Rewards;
     extern std::map<int32_t, TaskData*> Tasks;
-    extern nlohmann::json AvatarGrowth[36];
+    extern nlohmann::json AvatarGrowth[37];
     void init();
 
     void taskStart(CNSocket* sock, CNPacketData* data);
@@ -55,6 +55,7 @@ namespace MissionManager {
 
     void mobKilled(CNSocket *sock, int mobid);
 
+    bool endTask(CNSocket *sock, int32_t taskNum);
     void saveMission(Player* player, int missionId);
     void quitTask(CNSocket* sock, int32_t taskNum);
 }

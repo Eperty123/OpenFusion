@@ -4,6 +4,7 @@
 #include "PlayerManager.hpp"
 #include "NPCManager.hpp"
 #include "MobManager.hpp"
+#include "MissionManager.hpp"
 
 namespace NanoManager {
 
@@ -36,9 +37,9 @@ std::set<int> TreasureFinderPowers = {26, 40, 74};
  * worker functions so we don't have to have unsightly function declarations.
  */
 
-std::map<int32_t, NanoData> NanoManager::NanoTable;
-
 }; // namespace
+
+std::map<int32_t, NanoData> NanoManager::NanoTable;
 
 void NanoManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_NANO_ACTIVE, nanoSummonHandler);
@@ -202,7 +203,7 @@ void NanoManager::nanoPotionHandler(CNSocket* sock, CNPacketData* data) {
 }
 
 #pragma region Helper methods
-void NanoManager::addNano(CNSocket* sock, int16_t nanoId, int16_t slot) {
+void NanoManager::addNano(CNSocket* sock, int16_t nanoId, int16_t slot, bool spendfm) {
     if (nanoId > 36)
         return;
 
@@ -210,13 +211,21 @@ void NanoManager::addNano(CNSocket* sock, int16_t nanoId, int16_t slot) {
 
     int level = nanoId < plr->level ? plr->level : nanoId;
 
+    /*
+     * Spend the necessary Fusion Matter.
+     * Note the use of the not-yet-incremented plr->level as opposed to level.
+     * Doing it the other way always leaves the FM at 0. Jade totally called it.
+     */
+    if (spendfm)
+        MissionManager::updateFusionMatter(sock, -(int)MissionManager::AvatarGrowth[plr->level]["m_iReqBlob_NanoCreate"]);
+
     // Send to client
     INITSTRUCT(sP_FE2CL_REP_PC_NANO_CREATE_SUCC, resp);
     resp.Nano.iID = nanoId;
     resp.Nano.iStamina = 150;
     resp.iQuestItemSlotNum = slot;
     resp.iPC_Level = level;
-    resp.iPC_FusionMatter = plr->fusionmatter; // will decrease in actual nano missions
+    resp.iPC_FusionMatter = plr->fusionmatter;
 
     // Update player
     plr->Nanos[nanoId] = resp.Nano;
@@ -307,6 +316,7 @@ void NanoManager::setNanoSkill(CNSocket* sock, int16_t nanoId, int16_t skillId) 
     INITSTRUCT(sP_FE2CL_REP_NANO_TUNE_SUCC, resp);
     resp.iNanoID = nanoId;
     resp.iSkillID = skillId;
+    resp.iPC_FusionMatter = plr->fusionmatter;
     resp.aItem[9] = plr->Inven[0]; // temp fix for a bug TODO: Use this for nano power changing later
 
     sock->sendPacket((void*)&resp, P_FE2CL_REP_NANO_TUNE_SUCC, sizeof(sP_FE2CL_REP_NANO_TUNE_SUCC));
