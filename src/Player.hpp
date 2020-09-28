@@ -34,6 +34,7 @@ struct Player {
     int32_t iWarpLocationFlag;
     int64_t aSkywayLocationFlag[2];
     int32_t iConditionBitFlag;
+    int8_t iSpecialState;
 
     int x, y, z, angle;
     sItemBase Equip[AEQUIP_COUNT];
@@ -43,6 +44,13 @@ struct Player {
     int32_t moneyInTrade;
     bool isTrading;
     bool isTradeConfirm;
+
+    bool inCombat;
+    bool dotDamage;
+    
+    int pointDamage;
+    int groupDamage;
+    int defense;
 
     int64_t aQuestFlag[16];
     int tasks[ACTIVE_MISSION_COUNT];

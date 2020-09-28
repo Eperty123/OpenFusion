@@ -7,16 +7,25 @@
 #include <cmath>
 #include <assert.h>
 
+#ifndef MIN
+# define MIN(A,B) ((A)<(B)?(A):(B))
+#endif
+#ifndef MAX
+# define MAX(A,B) ((A)>(B)?(A):(B))
+#endif
+
 std::map<int32_t, Mob*> MobManager::Mobs;
 
 void MobManager::init() {
     REGISTER_SHARD_TIMER(step, 200);
+    REGISTER_SHARD_TIMER(playerTick, 2000);
 
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_ATTACK_NPCs, pcAttackNpcs);
 
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_COMBAT_BEGIN, combatBegin);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_COMBAT_END, combatEnd);
     REGISTER_SHARD_PACKET(P_CL2FE_DOT_DAMAGE_ONOFF, dotDamageOnOff);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_ATTACK_CHARs, pcAttackChars);
 }
 
 void MobManager::pcAttackNpcs(CNSocket *sock, CNPacketData *data) {
@@ -60,14 +69,22 @@ void MobManager::pcAttackNpcs(CNSocket *sock, CNPacketData *data) {
         }
         Mob *mob = Mobs[pktdata[i]];
 
-        int damage = hitMob(sock, mob, 150);
+        std::pair<int,int> damage;
+
+        if (pkt->iNPCCnt > 1)
+            damage = getDamage(plr->groupDamage, (int)mob->data["m_iProtection"], true, (int)mob->data["m_iNpcLevel"]);
+        else
+            damage = getDamage(plr->pointDamage, (int)mob->data["m_iProtection"], true, (int)mob->data["m_iNpcLevel"]);
+
+        damage.first = hitMob(sock, mob, damage.first);
 
         respdata[i].iID = mob->appearanceData.iNPC_ID;
-        respdata[i].iDamage = damage;
+        respdata[i].iDamage = damage.first;
         respdata[i].iHP = mob->appearanceData.iHP;
-        respdata[i].iHitFlag = 2; // hitscan, not a rocket or a grenade
+        respdata[i].iHitFlag = damage.second; // hitscan, not a rocket or a grenade
     }
 
+    resp->iBatteryW = plr->batteryW;
     sock->sendPacket((void*)respbuf, P_FE2CL_PC_ATTACK_NPCs_SUCC, resplen);
 
     // a bit of a hack: these are the same size, so we can reuse the response packet
@@ -92,28 +109,25 @@ void MobManager::npcAttackPc(Mob *mob) {
     sP_FE2CL_NPC_ATTACK_PCs *pkt = (sP_FE2CL_NPC_ATTACK_PCs*)respbuf;
     sAttackResult *atk = (sAttackResult*)(respbuf + sizeof(sP_FE2CL_NPC_ATTACK_PCs));
 
-    plr->HP += (int)mob->data["m_iPower"]; // already negative
+    auto damage = getDamage(440 + (int)mob->data["m_iPower"], plr->defense, false, 36 - (int)mob->data["m_iNpcLevel"]);
+    plr->HP -= damage.first;
 
     pkt->iNPC_ID = mob->appearanceData.iNPC_ID;
     pkt->iPCCnt = 1;
 
     atk->iID = plr->iID;
-    atk->iDamage = -(int)mob->data["m_iPower"];
+    atk->iDamage = damage.first;
     atk->iHP = plr->HP;
-    atk->iHitFlag = 2;
+    atk->iHitFlag = damage.second;
 
     mob->target->sendPacket((void*)respbuf, P_FE2CL_NPC_ATTACK_PCs, resplen);
-    PlayerManager::sendToViewable(mob->target, (void*)&pkt, P_FE2CL_NPC_ATTACK_PCs, resplen);
+    PlayerManager::sendToViewable(mob->target, (void*)respbuf, P_FE2CL_NPC_ATTACK_PCs, resplen);
 
     if (plr->HP <= 0) {
         mob->target = nullptr;
         mob->state = MobState::RETREAT;
     }
 }
-
-void MobManager::combatBegin(CNSocket *sock, CNPacketData *data) {} // stub
-void MobManager::combatEnd(CNSocket *sock, CNPacketData *data) {} // stub
-void MobManager::dotDamageOnOff(CNSocket *sock, CNPacketData *data) {} // stub
 
 void MobManager::giveReward(CNSocket *sock) {
     Player *plr = PlayerManager::getPlayer(sock);
@@ -136,12 +150,19 @@ void MobManager::giveReward(CNSocket *sock) {
     // simple rewards
     reward->m_iCandy = plr->money;
     reward->m_iFusionMatter = plr->fusionmatter;
+    reward->m_iBatteryN = plr->batteryN;
+    reward->m_iBatteryW = plr->batteryW;
     reward->iFatigue = 100; // prevents warning message
     reward->iFatigue_Level = 1;
     reward->iItemCnt = 1; // remember to update resplen if you change this
 
+#if 0
     int slot = ItemManager::findFreeSlot(plr);
     if (slot == -1) {
+#else
+    int slot = -1;
+    if (true) {
+#endif
         // no room for an item, but you still get FM and taros
         reward->iItemCnt = 0;
         sock->sendPacket((void*)respbuf, P_FE2CL_REP_REWARD_ITEM, sizeof(sP_FE2CL_REP_REWARD_ITEM));
@@ -171,6 +192,7 @@ int MobManager::hitMob(CNSocket *sock, Mob *mob, int damage) {
             mob->target = sock;
             mob->state = MobState::COMBAT;
             mob->nextMovement = getTime();
+            mob->nextAttack = 0;
         }
 
         mob->appearanceData.iHP -= damage;
@@ -191,8 +213,11 @@ void MobManager::killMob(CNSocket *sock, Mob *mob) {
     mob->appearanceData.iConditionBitFlag = 0;
     mob->killedTime = getTime(); // XXX: maybe introduce a shard-global time for each step?
 
-    giveReward(sock);
-    MissionManager::mobKilled(sock, mob->appearanceData.iNPCType);
+    // check for the edge case where hitting the mob did not aggro it
+    if (sock != nullptr) {
+        giveReward(sock);
+        MissionManager::mobKilled(sock, mob->appearanceData.iNPCType);
+    }
 
     mob->despawned = false;
 }
@@ -269,7 +294,7 @@ void MobManager::combatStep(Mob *mob, time_t currTime) {
         // movement logic
         if (mob->nextMovement != 0 && currTime < mob->nextMovement)
             return;
-        mob->nextMovement = currTime + (int)mob->data["m_iDelayTime"] * 100;
+        mob->nextMovement = currTime + 500;
 
         int speed = mob->data["m_iRunSpeed"];
 
@@ -293,8 +318,8 @@ void MobManager::combatStep(Mob *mob, time_t currTime) {
         NPCManager::sendToViewable(mob, &pkt, P_FE2CL_NPC_MOVE, sizeof(sP_FE2CL_NPC_MOVE));
     }
 
-    // retreat if kited too far
-    distance = hypot(mob->appearanceData.iX - mob->spawnX, mob->appearanceData.iY - mob->spawnY);
+    // retreat if the player leaves combat range
+    distance = hypot(plr->x - mob->spawnX, plr->y - mob->spawnY);
     if (distance >= mob->data["m_iCombatRange"]) {
         mob->target = nullptr;
         mob->state = MobState::RETREAT;
@@ -308,6 +333,38 @@ void MobManager::combatStep(Mob *mob, time_t currTime) {
  * Bad Max, etc.) once those have been made.
  */
 void MobManager::roamingStep(Mob *mob, time_t currTime) {
+    /*
+     * We reuse nextAttack to avoid scanning for players all the time, but to still
+     * do so more often than if we waited for nextMovement (which is way too slow).
+     */
+    if (mob->nextAttack == 0 || currTime >= mob->nextAttack) {
+        mob->nextAttack = currTime + (int)mob->data["m_iDelayTime"] * 100;
+
+        /*
+         * Aggro on nearby players.
+         * Even if they're in range, we can't assume they're all in the same one chunk
+         * as the mob, since it might be near a chunk boundary.
+         */
+        for (Chunk *chunk : mob->currentChunks) {
+            for (CNSocket *s : chunk->players) {
+                Player *plr = s->plr;
+
+                // height is relevant for aggro distance because of platforming
+                int xyDistance = hypot(mob->appearanceData.iX - plr->x, mob->appearanceData.iY - plr->y);
+                int distance = hypot(xyDistance, mob->appearanceData.iZ - plr->z);
+                if (distance > mob->data["m_iSightRange"])
+                    continue;
+
+                // found player. engage.
+                mob->target = s;
+                mob->state = MobState::COMBAT;
+                mob->nextMovement = currTime;
+                mob->nextAttack = 0;
+                return;
+            }
+        }
+    }
+
     // some mobs don't move (and we mustn't divide/modulus by zero)
     if (mob->idleRange == 0)
         return;
@@ -346,6 +403,11 @@ void MobManager::roamingStep(Mob *mob, time_t currTime) {
 
 void MobManager::retreatStep(Mob *mob, time_t currTime) {
     // distance between spawn point and current location
+    if (mob->nextMovement != 0 && currTime < mob->nextMovement)
+        return;
+
+    mob->nextMovement = currTime + 500;
+    
     int distance = hypot(mob->appearanceData.iX - mob->spawnX, mob->appearanceData.iY - mob->spawnY);
 
     if (distance > mob->data["m_iIdleRange"]) {
@@ -418,13 +480,236 @@ void MobManager::step(CNServer *serv, time_t currTime) {
 std::pair<int,int> MobManager::lerp(int x1, int y1, int x2, int y2, int speed) {
     std::pair<int,int> ret = {};
 
+    speed /= 2;
     int distance = hypot(x1 - x2, y1 - y2);
-    int lerps = distance / speed;
 
-    // interpolate only the first point
-    float frac = 1.0f / (lerps+1);
-    ret.first = (x1 * (1.0f - frac)) + (x2 * frac);
-    ret.second = (y1 * (1.0f - frac)) + (y2 * frac);
+    if (distance > speed) {
+        int lerps = distance / speed;
+
+        // interpolate only the first point
+        float frac = 1.0f / (lerps);     
+
+        ret.first = (x1 + (x2 - x1) * frac);
+        ret.second = (y1 + (y2 - y1) * frac);
+    } else {
+        ret.first = x2;
+        ret.second = y2;
+    }
 
     return ret;
+}
+
+void MobManager::combatBegin(CNSocket *sock, CNPacketData *data) {
+    Player *plr = PlayerManager::getPlayer(sock);
+    plr->inCombat = true;
+}
+
+void MobManager::combatEnd(CNSocket *sock, CNPacketData *data) {
+    Player *plr = PlayerManager::getPlayer(sock);
+    plr->inCombat = false;
+}
+
+void MobManager::dotDamageOnOff(CNSocket *sock, CNPacketData *data) {
+    sP_CL2FE_DOT_DAMAGE_ONOFF *pkt = (sP_CL2FE_DOT_DAMAGE_ONOFF*)data->buf;
+    Player *plr = PlayerManager::getPlayer(sock);
+
+    plr->dotDamage = (bool)pkt->iFlag;
+}
+
+void MobManager::dealGooDamage(CNSocket *sock, int amount) {
+    size_t resplen = sizeof(sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK) + sizeof(sSkillResult_DotDamage);
+    assert(resplen < CN_PACKET_BUFFER_SIZE - 8);
+    uint8_t respbuf[CN_PACKET_BUFFER_SIZE];
+
+    memset(respbuf, 0, resplen);
+
+    sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK *pkt = (sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK*)respbuf;
+    sSkillResult_DotDamage *dmg = (sSkillResult_DotDamage*)(respbuf + sizeof(sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK));
+    Player *plr = PlayerManager::getPlayer(sock);
+
+    // update player
+    plr->HP -= amount;
+
+    pkt->iID = plr->iID;
+    pkt->eCT = 1; // player
+    pkt->iTB_ID = ECSB_INFECTION; // sSkillResult_DotDamage
+
+    dmg->eCT = 1;
+    dmg->iID = plr->iID;
+    dmg->iDamage = amount;
+    dmg->iHP = plr->HP;
+
+    sock->sendPacket((void*)&respbuf, P_FE2CL_CHAR_TIME_BUFF_TIME_TICK, resplen);
+    PlayerManager::sendToViewable(sock, (void*)&respbuf, P_FE2CL_CHAR_TIME_BUFF_TIME_TICK, resplen);
+}
+
+void MobManager::playerTick(CNServer *serv, time_t currTime) {
+    static time_t lastHealTime = 0;
+
+    for (auto& pair : PlayerManager::players) {
+        CNSocket *sock = pair.first;
+        Player *plr = pair.second.plr;
+        bool transmit = false;
+
+        // do not tick dead players
+        if (plr->HP <= 0)
+            continue;
+
+        // fm patch/lake damage
+        if (plr->dotDamage)
+            dealGooDamage(sock, 150);
+
+        // a somewhat hacky way tick goo damage faster than heal, but eh
+        if (currTime - lastHealTime < 4000)
+            continue;
+
+        // heal
+        if (!plr->inCombat && plr->HP < PC_MAXHEALTH(plr->level)) {
+            plr->HP += 200;
+            if (plr->HP > PC_MAXHEALTH(plr->level))
+                plr->HP = PC_MAXHEALTH(plr->level);
+            transmit = true;
+        }
+
+        for (int i = 0; i < 3; i++) {
+            if (plr->activeNano != 0 && plr->equippedNanos[i] == plr->activeNano) { // spend stamina
+                plr->Nanos[plr->activeNano].iStamina -= 3;
+
+                if (plr->Nanos[plr->activeNano].iStamina < 0)
+                    plr->activeNano = 0;
+
+                transmit = true;
+            } else if (plr->Nanos[plr->equippedNanos[i]].iStamina < 150) { // regain stamina
+                sNano& nano = plr->Nanos[plr->equippedNanos[i]];
+                nano.iStamina += 3;
+
+                if (nano.iStamina > 150)
+                    nano.iStamina = 150;
+
+                transmit = true;
+            }
+        }
+
+        if (transmit) {
+            INITSTRUCT(sP_FE2CL_REP_PC_TICK, pkt);
+
+            pkt.iHP = plr->HP;
+            pkt.iBatteryN = plr->batteryN;
+
+            pkt.aNano[0] = plr->Nanos[plr->equippedNanos[0]];
+            pkt.aNano[1] = plr->Nanos[plr->equippedNanos[1]];
+            pkt.aNano[2] = plr->Nanos[plr->equippedNanos[2]];
+
+            sock->sendPacket((void*)&pkt, P_FE2CL_REP_PC_TICK, sizeof(sP_FE2CL_REP_PC_TICK));
+        }
+    }
+
+    // if this was a heal tick, update the counter outside of the loop
+    if (currTime - lastHealTime < 4000)
+        lastHealTime = currTime;
+}
+
+std::pair<int,int> MobManager::getDamage(int attackPower, int defensePower, bool shouldCrit, int crutchLevel) {
+
+    std::pair<int,int> ret = {};
+
+    int damage = (MAX(40, attackPower - defensePower) * (34 + crutchLevel) + MIN(attackPower, attackPower * attackPower / defensePower) * (36 - crutchLevel)) / 70;
+    ret.first = damage * (rand() % 40 + 80) / 100; // 20% variance
+    ret.second = 1;
+
+    if (shouldCrit && rand() % 20 == 0) {
+        ret.first *= 2; // critical hit
+        ret.second = 2;
+    }
+
+    return ret;
+}
+
+void MobManager::pcAttackChars(CNSocket *sock, CNPacketData *data) {
+    sP_CL2FE_REQ_PC_ATTACK_CHARs* pkt = (sP_CL2FE_REQ_PC_ATTACK_CHARs*)data->buf;
+    Player *plr = PlayerManager::getPlayer(sock);
+
+    // Unlike the attack mob packet, attacking players packet has an 8-byte trail (Instead of 4 bytes).
+    if (!validInVarPacket(sizeof(sP_CL2FE_REQ_PC_ATTACK_CHARs), pkt->iTargetCnt, sizeof(int32_t) * 2, data->size)) {
+        std::cout << "[WARN] bad sP_CL2FE_REQ_PC_ATTACK_CHARs packet size\n";
+        return;
+    }
+
+    int32_t *pktdata = (int32_t*)((uint8_t*)data->buf + sizeof(sP_CL2FE_REQ_PC_ATTACK_CHARs));
+
+    if (!validOutVarPacket(sizeof(sP_FE2CL_PC_ATTACK_CHARs_SUCC), pkt->iTargetCnt, sizeof(sAttackResult))) {
+        std::cout << "[WARN] bad sP_FE2CL_PC_ATTACK_CHARs_SUCC packet size\n";
+        return;
+    }
+
+    // initialize response struct
+    size_t resplen = sizeof(sP_FE2CL_PC_ATTACK_CHARs_SUCC) + pkt->iTargetCnt * sizeof(sAttackResult);
+    uint8_t respbuf[CN_PACKET_BUFFER_SIZE];
+
+    memset(respbuf, 0, resplen);
+
+    sP_FE2CL_PC_ATTACK_CHARs_SUCC *resp = (sP_FE2CL_PC_ATTACK_CHARs_SUCC*)respbuf;
+    sAttackResult *respdata = (sAttackResult*)(respbuf+sizeof(sP_FE2CL_PC_ATTACK_CHARs_SUCC));
+
+    resp->iTargetCnt = pkt->iTargetCnt;
+
+    for (int i = 0; i < pkt->iTargetCnt; i++) {
+        if (pktdata[i*2+1] == 1) { // eCT == 1; attack player
+            Player *target = nullptr;
+
+            for (auto& pair : PlayerManager::players) {
+                if (pair.second.plr->iID == pktdata[i*2]) {
+                    target = pair.second.plr;
+                    break;
+                }
+            }
+
+            if (target == nullptr) {
+                // you shall not pass
+                std::cout << "[WARN] pcAttackChars: player ID not found" << std::endl;
+                return;
+            }
+
+            target->HP -= 100;
+
+            respdata[i].eCT = pktdata[i*2+1];
+            respdata[i].iID = target->iID;
+            respdata[i].iDamage = 100;
+            respdata[i].iHP = target->HP;
+            respdata[i].iHitFlag = 2; // hitscan, not a rocket or a grenade
+        } else { // eCT == 4; attack mob
+            if (Mobs.find(pktdata[i*2]) == Mobs.end()) {
+                // not sure how to best handle this
+                std::cout << "[WARN] pcAttackNpcs: mob ID not found" << std::endl;
+                return;
+            }
+            Mob *mob = Mobs[pktdata[i*2]];
+
+            std::pair<int,int> damage;
+
+            if (pkt->iTargetCnt > 1)
+                damage = getDamage(plr->groupDamage, (int)mob->data["m_iProtection"], true, (int)mob->data["m_iNpcLevel"]);
+            else
+                damage = getDamage(plr->pointDamage, (int)mob->data["m_iProtection"], true, (int)mob->data["m_iNpcLevel"]);
+
+            damage.first = hitMob(sock, mob, damage.first);
+
+            respdata[i].eCT = pktdata[i*2+1];
+            respdata[i].iID = mob->appearanceData.iNPC_ID;
+            respdata[i].iDamage = damage.first;
+            respdata[i].iHP = mob->appearanceData.iHP;
+            respdata[i].iHitFlag = damage.second; // hitscan, not a rocket or a grenade
+        }
+    }
+
+    sock->sendPacket((void*)respbuf, P_FE2CL_PC_ATTACK_CHARs_SUCC, resplen);
+
+    // a bit of a hack: these are the same size, so we can reuse the response packet
+    assert(sizeof(sP_FE2CL_PC_ATTACK_NPCs_SUCC) == sizeof(sP_FE2CL_PC_ATTACK_CHARs));
+    sP_FE2CL_PC_ATTACK_CHARs *resp1 = (sP_FE2CL_PC_ATTACK_CHARs*)respbuf;
+
+    resp1->iPC_ID = plr->iID;
+
+    // send to other players
+    PlayerManager::sendToViewable(sock, (void*)respbuf, P_FE2CL_PC_ATTACK_CHARs, resplen);
 }
