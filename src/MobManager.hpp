@@ -8,6 +8,7 @@
 #include "contrib/JSON.hpp"
 
 #include <map>
+#include <queue>
 
 enum class MobState {
     INACTIVE,
@@ -42,8 +43,8 @@ struct Mob : public BaseNPC {
     // temporary; until we're sure what's what
     nlohmann::json data;
 
-    Mob(int x, int y, int z, int type, int hp, int angle, nlohmann::json d, int32_t id)
-        : BaseNPC(x, y, z, type, id), maxHealth(hp) {
+    Mob(int x, int y, int z, int iID, int type, int hp, int angle, nlohmann::json d, int32_t id)
+        : BaseNPC(x, y, z, iID, type, id), maxHealth(hp) {
         state = MobState::ROAMING;
 
         data = d;
@@ -68,8 +69,8 @@ struct Mob : public BaseNPC {
     }
 
     // constructor for /summon
-    Mob(int x, int y, int z, int type, nlohmann::json d, int32_t id)
-        : Mob(x, y, z, type, 0, 0, d, id) {
+    Mob(int x, int y, int z, int iID, int type, nlohmann::json d, int32_t id)
+        : Mob(x, y, z, iID, type, 0, 0, d, id) {
         summoned = true; // will be despawned and deallocated when killed
         appearanceData.iHP = maxHealth = d["m_iHP"];
     }
@@ -83,6 +84,7 @@ struct Mob : public BaseNPC {
 
 namespace MobManager {
     extern std::map<int32_t, Mob*> Mobs;
+    extern std::queue<int32_t> RemovalQueue;
 
     void init();
     void step(CNServer*, time_t);
@@ -107,4 +109,5 @@ namespace MobManager {
     std::pair<int,int> getDamage(int, int, bool, int);
 
     void pcAttackChars(CNSocket *sock, CNPacketData *data);
+    void resendMobHP(Mob *mob);
 }

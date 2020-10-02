@@ -7,14 +7,8 @@
 #include <cmath>
 #include <assert.h>
 
-#ifndef MIN
-# define MIN(A,B) ((A)<(B)?(A):(B))
-#endif
-#ifndef MAX
-# define MAX(A,B) ((A)>(B)?(A):(B))
-#endif
-
 std::map<int32_t, Mob*> MobManager::Mobs;
+std::queue<int32_t> MobManager::RemovalQueue;
 
 void MobManager::init() {
     REGISTER_SHARD_TIMER(step, 200);
@@ -114,7 +108,7 @@ void MobManager::npcAttackPc(Mob *mob) {
     sP_FE2CL_NPC_ATTACK_PCs *pkt = (sP_FE2CL_NPC_ATTACK_PCs*)respbuf;
     sAttackResult *atk = (sAttackResult*)(respbuf + sizeof(sP_FE2CL_NPC_ATTACK_PCs));
 
-    auto damage = getDamage(440 + (int)mob->data["m_iPower"], plr->defense, false, 36 - (int)mob->data["m_iNpcLevel"]);
+    auto damage = getDamage(470 + (int)mob->data["m_iPower"], plr->defense, false, 1);
     plr->HP -= damage.first;
 
     pkt->iNPC_ID = mob->appearanceData.iNPC_ID;
@@ -241,10 +235,10 @@ void MobManager::deadStep(Mob *mob, time_t currTime) {
 
         NPCManager::sendToViewable(mob, &pkt, P_FE2CL_NPC_EXIT, sizeof(sP_FE2CL_NPC_EXIT));
 
-        // if it was summoned, remove it permanently
+        // if it was summoned, mark it for removal
         if (mob->summoned) {
-            std::cout << "[INFO] Deallocating killed summoned mob" << std::endl;
-            NPCManager::destroyNPC(mob->appearanceData.iNPC_ID);
+            std::cout << "[INFO] Queueing killed summoned mob for removal" << std::endl;
+            RemovalQueue.push(mob->appearanceData.iNPC_ID);
             return;
         }
     }
@@ -443,16 +437,22 @@ void MobManager::retreatStep(Mob *mob, time_t currTime) {
         mob->killedTime = 0;
         mob->nextAttack = 0;
         mob->appearanceData.iConditionBitFlag = 0;
+        
+        //INITSTRUCT(sP_FE2CL_NPC_ENTER, enterData);
+        //enterData.NPCAppearanceData = mob->appearanceData;
+        //NPCManager::sendToViewable(mob, &enterData, P_FE2CL_NPC_ENTER, sizeof(sP_FE2CL_NPC_ENTER));
+        resendMobHP(mob);
     }
 }
 
 void MobManager::step(CNServer *serv, time_t currTime) {
+
     for (auto& pair : Mobs) {
         int x = pair.second->appearanceData.iX;
         int y = pair.second->appearanceData.iY;
 
         // skip chunks without players
-        if (!ChunkManager::inPopulatedChunks(x, y))
+        if (!ChunkManager::inPopulatedChunks(x, y, pair.second->instanceID))
             continue;
 
         // skip mob movement and combat if disabled
@@ -482,6 +482,12 @@ void MobManager::step(CNServer *serv, time_t currTime) {
             break;
         }
     }
+
+    // deallocate all NPCs queued for removal
+    while (RemovalQueue.size() > 0) {
+        NPCManager::destroyNPC(RemovalQueue.front());
+        RemovalQueue.pop();
+    }
 }
 
 /*
@@ -489,19 +495,21 @@ void MobManager::step(CNServer *serv, time_t currTime) {
  * only returns the first step, since the rest will need to be recalculated anyway if chasing player.
  */
 std::pair<int,int> MobManager::lerp(int x1, int y1, int x2, int y2, int speed) {
-    std::pair<int,int> ret = {};
+    std::pair<int,int> ret = {x1, y1};
 
     speed /= 2;
+    
+    if (speed == 0)
+        return ret;
+    
     int distance = hypot(x1 - x2, y1 - y2);
 
     if (distance > speed) {
-        if (speed == 0)
-            speed = 1;
         
         int lerps = distance / speed;
 
         // interpolate only the first point
-        float frac = 1.0f / (lerps);     
+        float frac = 1.0f / lerps;     
 
         ret.first = (x1 + (x2 - x1) * frac);
         ret.second = (y1 + (y2 - y1) * frac);
@@ -579,15 +587,11 @@ void MobManager::playerTick(CNServer *serv, time_t currTime) {
 
         // fm patch/lake damage
         if (plr->dotDamage)
-            dealGooDamage(sock, 150);
-
-        // a somewhat hacky way tick goo damage faster than heal, but eh
-        if (currTime - lastHealTime < 4000)
-            continue;
+            dealGooDamage(sock, PC_MAXHEALTH(plr->level) * 3 / 20);
 
         // heal
-        if (!plr->inCombat && plr->HP < PC_MAXHEALTH(plr->level)) {
-            plr->HP += 200;
+        if (currTime - lastHealTime >= 6000 && !plr->inCombat && plr->HP < PC_MAXHEALTH(plr->level)) {
+            plr->HP += PC_MAXHEALTH(plr->level) / 5;
             if (plr->HP > PC_MAXHEALTH(plr->level))
                 plr->HP = PC_MAXHEALTH(plr->level);
             transmit = true;
@@ -595,7 +599,10 @@ void MobManager::playerTick(CNServer *serv, time_t currTime) {
 
         for (int i = 0; i < 3; i++) {
             if (plr->activeNano != 0 && plr->equippedNanos[i] == plr->activeNano) { // spend stamina
-                plr->Nanos[plr->activeNano].iStamina -= 3;
+                plr->Nanos[plr->activeNano].iStamina -= 1;
+                
+                if (plr->passiveNanoOut)
+                   plr->Nanos[plr->activeNano].iStamina -= 1; 
 
                 if (plr->Nanos[plr->activeNano].iStamina < 0)
                     plr->activeNano = 0;
@@ -603,7 +610,7 @@ void MobManager::playerTick(CNServer *serv, time_t currTime) {
                 transmit = true;
             } else if (plr->Nanos[plr->equippedNanos[i]].iStamina < 150) { // regain stamina
                 sNano& nano = plr->Nanos[plr->equippedNanos[i]];
-                nano.iStamina += 3;
+                nano.iStamina += 1;
 
                 if (nano.iStamina > 150)
                     nano.iStamina = 150;
@@ -627,7 +634,7 @@ void MobManager::playerTick(CNServer *serv, time_t currTime) {
     }
 
     // if this was a heal tick, update the counter outside of the loop
-    if (currTime - lastHealTime < 4000)
+    if (currTime - lastHealTime >= 6000)
         lastHealTime = currTime;
 }
 
@@ -635,7 +642,7 @@ std::pair<int,int> MobManager::getDamage(int attackPower, int defensePower, bool
 
     std::pair<int,int> ret = {};
 
-    int damage = (MAX(40, attackPower - defensePower) * (34 + crutchLevel) + MIN(attackPower, attackPower * attackPower / defensePower) * (36 - crutchLevel)) / 70;
+    int damage = (std::max(40, attackPower - defensePower) * (34 + crutchLevel) + std::min(attackPower, attackPower * attackPower / defensePower) * (36 - crutchLevel)) / 70;
     ret.first = damage * (rand() % 40 + 80) / 100; // 20% variance
     ret.second = 1;
 
@@ -694,14 +701,21 @@ void MobManager::pcAttackChars(CNSocket *sock, CNPacketData *data) {
                 std::cout << "[WARN] pcAttackChars: player ID not found" << std::endl;
                 return;
             }
+            
+            std::pair<int,int> damage;
+            
+            if (pkt->iTargetCnt > 1)
+                damage = getDamage(plr->groupDamage, target->defense, true, 1);
+            else
+                damage = getDamage(plr->pointDamage, target->defense, true, 1);
 
-            target->HP -= 700;
+            target->HP -= damage.first;
 
             respdata[i].eCT = pktdata[i*2+1];
             respdata[i].iID = target->iID;
-            respdata[i].iDamage = 700;
+            respdata[i].iDamage = damage.first;
             respdata[i].iHP = target->HP;
-            respdata[i].iHitFlag = 2; // hitscan, not a rocket or a grenade
+            respdata[i].iHitFlag = damage.second; // hitscan, not a rocket or a grenade
         } else { // eCT == 4; attack mob
             if (Mobs.find(pktdata[i*2]) == Mobs.end()) {
                 // not sure how to best handle this
@@ -737,4 +751,26 @@ void MobManager::pcAttackChars(CNSocket *sock, CNPacketData *data) {
 
     // send to other players
     PlayerManager::sendToViewable(sock, (void*)respbuf, P_FE2CL_PC_ATTACK_CHARs, resplen);
+}
+
+void MobManager::resendMobHP(Mob *mob) {
+    size_t resplen = sizeof(sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK) + sizeof(sSkillResult_Heal_HP);
+    assert(resplen < CN_PACKET_BUFFER_SIZE - 8);
+    uint8_t respbuf[CN_PACKET_BUFFER_SIZE];
+
+    memset(respbuf, 0, resplen);
+
+    sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK *pkt = (sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK*)respbuf;
+    sSkillResult_Heal_HP *heal = (sSkillResult_Heal_HP*)(respbuf + sizeof(sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK));
+
+    pkt->iID = mob->appearanceData.iNPC_ID;
+    pkt->eCT = 4; // mob
+    pkt->iTB_ID = ECSB_HEAL; // sSkillResult_Heal_HP
+
+    heal->eCT = 4;
+    heal->iID = mob->appearanceData.iNPC_ID;
+    heal->iHealHP = 0;
+    heal->iHP = mob->appearanceData.iHP;
+
+    NPCManager::sendToViewable(mob, (void*)&respbuf, P_FE2CL_CHAR_TIME_BUFF_TIME_TICK, resplen);
 }
