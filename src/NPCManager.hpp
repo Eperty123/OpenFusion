@@ -27,6 +27,7 @@ namespace NPCManager {
     void addNPC(std::vector<Chunk*> viewableChunks, int32_t id);
     void removeNPC(std::vector<Chunk*> viewableChunks, int32_t id);
     void destroyNPC(int32_t);
+    void updateNPCPosition(int32_t, int X, int Y, int Z, int angle);
     void updateNPCPosition(int32_t, int X, int Y, int Z);
 
     void sendToViewable(BaseNPC* npc, void* buf, uint32_t type, size_t size);
@@ -46,4 +47,6 @@ namespace NPCManager {
     void npcCombineItems(CNSocket* sock, CNPacketData* data);
 
     void handleWarp(CNSocket* sock, int32_t warpId);
+
+    BaseNPC* getNearestNPC(std::vector<Chunk*> chunks, int X, int Y, int Z);
 }

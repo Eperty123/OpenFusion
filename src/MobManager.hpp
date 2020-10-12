@@ -85,6 +85,7 @@ struct Mob : public BaseNPC {
 namespace MobManager {
     extern std::map<int32_t, Mob*> Mobs;
     extern std::queue<int32_t> RemovalQueue;
+    extern bool simulateMobs;
 
     void init();
     void step(CNServer*, time_t);
@@ -101,13 +102,14 @@ namespace MobManager {
     void dotDamageOnOff(CNSocket *sock, CNPacketData *data);
     void dealGooDamage(CNSocket *sock, int amount);
 
-    void npcAttackPc(Mob *mob);
+    void npcAttackPc(Mob *mob, time_t currTime);
     int hitMob(CNSocket *sock, Mob *mob, int damage);
     void killMob(CNSocket *sock, Mob *mob);
     void giveReward(CNSocket *sock);
     std::pair<int,int> lerp(int, int, int, int, int);
-    std::pair<int,int> getDamage(int, int, bool, int);
+    std::pair<int,int> getDamage(int, int, bool, bool, int, int, int);
 
     void pcAttackChars(CNSocket *sock, CNPacketData *data);
     void resendMobHP(Mob *mob);
+    bool aggroCheck(Mob *mob, time_t currTime);
 }

@@ -12,6 +12,10 @@
 
 #include <fstream>
 
+std::map<int32_t, std::vector<WarpLocation>> TableData::RunningSkywayRoutes;
+std::map<int32_t, int> TableData::RunningNPCRotations;
+std::map<int32_t, BaseNPC*> TableData::RunningMobs;
+
 void TableData::init() {
     int32_t nextId = 0;
 
@@ -124,7 +128,7 @@ void TableData::init() {
         std::cout << "[INFO] Loaded " << ItemManager::ItemData.size() << " items" << std::endl;
 
         // load player limits from m_pAvatarTable.m_pAvatarGrowData
-        
+
         nlohmann::json growth = xdtData["m_pAvatarTable"]["m_pAvatarGrowData"];
 
         for (int i = 0; i < 37; i++) {
@@ -193,6 +197,8 @@ void TableData::init() {
     catch (const std::exception& err) {
         std::cerr << "[WARN] Malformed mobs.json file! Reason:" << err.what() << std::endl;
     }
+
+    loadGruntwork(&nextId);
 
     NPCManager::nextId = nextId;
 }
@@ -288,7 +294,6 @@ void TableData::constructPathSkyway(nlohmann::json::iterator _pathData) {
 }
 
 void TableData::constructPathSlider(nlohmann::json points, int rotations, int sliderID) {
-
     std::queue<WarpLocation> route;
     std::rotate(points.begin(), points.begin() + rotations, points.end()); // rotate points
     nlohmann::json::iterator _point = points.begin(); // iterator
@@ -333,4 +338,123 @@ void TableData::constructPathNPC(nlohmann::json::iterator _pathData) {
         stopTime = point["stop"];
     }
     TransportManager::NPCQueues[pathData["iNPCID"]] = points;
+}
+
+// load gruntwork output; if it exists
+void TableData::loadGruntwork(int32_t *nextId) {
+    try {
+        std::ifstream inFile(settings::GRUNTWORKJSON);
+        nlohmann::json gruntwork;
+
+        // skip if there's no gruntwork to load
+        if (inFile.fail())
+            return;
+
+        inFile >> gruntwork;
+
+        // skyway paths
+        auto skyway = gruntwork["skyway"];
+        for (auto _route = skyway.begin(); _route != skyway.end(); _route++) {
+            auto route = _route.value();
+            std::vector<WarpLocation> points;
+
+            for (auto _point = route["points"].begin(); _point != route["points"].end(); _point++) {
+                auto point = _point.value();
+                points.push_back(WarpLocation{point["x"], point["y"], point["z"]});
+            }
+
+            RunningSkywayRoutes[(int)route["iRouteID"]] = points;
+        }
+
+        // npc rotations
+        auto npcRot = gruntwork["rotations"];
+        for (auto _rot = npcRot.begin(); _rot != npcRot.end(); _rot++) {
+            int32_t npcID = _rot.value()["iNPCID"];
+            int angle = _rot.value()["iAngle"];
+            if (NPCManager::NPCs.find(npcID) == NPCManager::NPCs.end())
+                continue; // NPC not found
+            BaseNPC* npc = NPCManager::NPCs[npcID];
+            npc->appearanceData.iAngle = angle;
+
+            RunningNPCRotations[npcID] = angle;
+        }
+
+        // mobs
+        auto mobs = gruntwork["mobs"];
+        for (auto _mob = mobs.begin(); _mob != mobs.end(); _mob++) {
+            auto mob = _mob.value();
+
+            Mob *npc = new Mob(mob["iX"], mob["iY"], mob["iZ"], INSTANCE_OVERWORLD, mob["iNPCType"],
+                NPCManager::NPCData[(int)mob["iNPCType"]], (*nextId)++);
+
+            NPCManager::NPCs[npc->appearanceData.iNPC_ID] = npc;
+            MobManager::Mobs[npc->appearanceData.iNPC_ID] = npc;
+            TableData::RunningMobs[npc->appearanceData.iNPC_ID] = npc;
+            NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, mob["iX"], mob["iY"], mob["iZ"]);
+
+            // re-enable respawning
+            npc->summoned = false;
+        }
+
+        std::cout << "[INFO] Loaded gruntwork.json" << std::endl;
+    }
+    catch (const std::exception& err) {
+        std::cerr << "[WARN] Malformed gruntwork.json file! Reason:" << err.what() << std::endl;
+    }
+}
+
+// write gruntwork output to file
+void TableData::flush() {
+    std::ofstream file(settings::GRUNTWORKJSON);
+    nlohmann::json gruntwork;
+
+    for (auto& pair : RunningSkywayRoutes) {
+        nlohmann::json route;
+
+        route["iRouteID"] = (int)pair.first;
+        route["iMonkeySpeed"] = 1500; // TODO
+
+        std::cout << "serializing mss route " << (int)pair.first << std::endl;
+        for (WarpLocation& point : pair.second) {
+            nlohmann::json tmp;
+
+            tmp["x"] = point.x;
+            tmp["y"] = point.y;
+            tmp["z"] = point.z;
+
+            route["points"].push_back(tmp);
+        }
+
+        gruntwork["skyway"].push_back(route);
+    }
+
+    for (auto& pair : RunningNPCRotations) {
+        nlohmann::json rotation;
+
+        rotation["iNPCID"] = (int)pair.first;
+        rotation["iAngle"] = pair.second;
+
+        gruntwork["rotations"].push_back(rotation);
+    }
+
+    for (auto& pair : RunningMobs) {
+        nlohmann::json mob;
+        Mob *m = (Mob*)pair.second; // we need spawnX, etc
+
+        if (NPCManager::NPCs.find(pair.first) == NPCManager::NPCs.end())
+            continue;
+
+        // NOTE: this format deviates slightly from the one in mobs.json
+        mob["iNPCType"] = (int)m->appearanceData.iNPCType;
+        mob["iHP"] = (int)m->maxHealth;
+        mob["iX"] = m->spawnX;
+        mob["iY"] = m->spawnY;
+        mob["iZ"] = m->spawnZ;
+        // this is a bit imperfect, since this is a live angle, not a spawn angle so it'll change often, but eh
+        mob["iAngle"] = m->appearanceData.iAngle;
+
+        gruntwork["mobs"].push_back(mob);
+    }
+
+    file << gruntwork << std::endl;
 }

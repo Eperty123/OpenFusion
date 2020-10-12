@@ -34,6 +34,9 @@ namespace PlayerManager {
     void updatePlayerPosition(CNSocket* sock, int X, int Y, int Z, int angle);
     void updatePlayerChunk(CNSocket* sock, int X, int Y);
 
+    void sendPlayerTo(CNSocket* sock, int X, int Y, int Z, int I);
+    void sendPlayerTo(CNSocket* sock, int X, int Y, int Z);
+
     void sendToViewable(CNSocket* sock, void* buf, uint32_t type, size_t size);
 
     void enterPlayer(CNSocket* sock, CNPacketData* data);
@@ -66,5 +69,6 @@ namespace PlayerManager {
     bool isAccountInUse(int accountId);
     void exitDuplicate(int accountId);
     void setSpecialState(CNSocket* sock, CNPacketData* data);
-    CNSocket* getSockFromID(int32_t iID);
+    Player *getPlayerFromID(int32_t iID);
+    CNSocket *getSockFromID(int32_t iID);
 }

@@ -6,6 +6,7 @@
 #include "CNShared.hpp"
 #include "settings.hpp"
 #include "Database.hpp"
+#include "TableData.hpp" // for flush()
 
 #include <iostream>
 #include <sstream>
@@ -56,6 +57,7 @@ void CNShardServer::periodicSaveTimer(CNServer* serv, time_t currTime) {
         Database::updatePlayer(pair.second.plr);
     }
 
+    TableData::flush();
     std::cout << "[INFO] Done." << std::endl;
 }
 
@@ -77,9 +79,9 @@ void CNShardServer::_killConnection(CNSocket* cns) {
         // also, hopefully the player's progress was already saved since the last db save interval, but rip those 2 mins of progress lol
         return;
     }
-        
+
     int64_t key = plr->SerialKey;
-    
+
     // save player to DB
     Database::updatePlayer(PlayerManager::players[cns].plr);
     PlayerManager::removePlayer(cns);

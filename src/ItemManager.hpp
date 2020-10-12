@@ -26,7 +26,7 @@ namespace ItemManager {
     extern std::map<int32_t, std::vector<VendorListing>> VendorTables;
     extern std::map<int32_t, CrocPotEntry> CrocPotTable; // level gap -> entry
 
-    void init();	
+    void init();
 
     void itemMoveHandler(CNSocket* sock, CNPacketData* data);
     void itemDeleteHandler(CNSocket* sock, CNPacketData* data);
@@ -50,4 +50,5 @@ namespace ItemManager {
     Item* getItemData(int32_t id, int32_t type);
     void checkItemExpire(CNSocket* sock, Player* player);
     void setItemStats(Player* plr);
+    void updateEquips(CNSocket* sock, Player* plr);
 }

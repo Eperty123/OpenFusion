@@ -1,7 +1,9 @@
 #include "CNShardServer.hpp"
 #include "CNStructs.hpp"
 #include "PlayerManager.hpp"
+#include "NanoManager.hpp"
 #include "TransportManager.hpp"
+#include "TableData.hpp"
 
 #include <unordered_map>
 #include <cmath>
@@ -153,7 +155,14 @@ void TransportManager::transportWarpHandler(CNSocket* sock, CNPacketData* data) 
         break;
     case 2: // Monkey Skyway
         if (SkywayPaths.find(route.mssRouteNum) != SkywayPaths.end()) { // check if route exists
+            NanoManager::summonNano(sock, -1); // make sure that no nano is active during the ride
             SkywayQueues[sock] = SkywayPaths[route.mssRouteNum]; // set socket point queue to route
+            break;
+        } else if (TableData::RunningSkywayRoutes.find(route.mssRouteNum) != TableData::RunningSkywayRoutes.end()) {
+            std::vector<WarpLocation>* _route = &TableData::RunningSkywayRoutes[route.mssRouteNum];
+
+            NanoManager::summonNano(sock, -1);
+            testMssRoute(sock, _route);
             break;
         }
 
@@ -162,7 +171,7 @@ void TransportManager::transportWarpHandler(CNSocket* sock, CNPacketData* data) 
         INITSTRUCT(sP_FE2CL_ANNOUNCE_MSG, alert);
         alert.iAnnounceType = 0; // don't think this lets us make a confirm dialog
         alert.iDuringTime = 3;
-        U8toU16("Skyway route " + std::to_string(route.mssRouteNum) + " isn't pathed yet. You will not be charged any taros.", (char16_t*)alert.szAnnounceMsg);
+        U8toU16("Skyway route " + std::to_string(route.mssRouteNum) + " isn't pathed yet. You will not be charged any taros.", (char16_t*)alert.szAnnounceMsg, sizeof(alert.szAnnounceMsg));
         sock->sendPacket((void*)&alert, P_FE2CL_ANNOUNCE_MSG, sizeof(sP_FE2CL_ANNOUNCE_MSG));
 
         std::cout << "[WARN] MSS route " << route.mssRouteNum << " not pathed" << std::endl;
@@ -182,6 +191,21 @@ void TransportManager::transportWarpHandler(CNSocket* sock, CNPacketData* data) 
     sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_WARP_USE_TRANSPORTATION_SUCC, sizeof(sP_FE2CL_REP_PC_WARP_USE_TRANSPORTATION_SUCC));
 }
 
+void TransportManager::testMssRoute(CNSocket *sock, std::vector<WarpLocation>* route) {
+    int speed = 1500; // TODO: make this adjustable
+    std::queue<WarpLocation> path;
+    WarpLocation last = route->front(); // start pos
+
+    for (int i = 1; i < route->size(); i++) {
+        WarpLocation coords = route->at(i);
+        TransportManager::lerp(&path, last, coords, speed);
+        path.push(coords); // add keyframe to the queue
+        last = coords; // update start pos
+    }
+
+    SkywayQueues[sock] = path;
+}
+
 void TransportManager::tickTransportationSystem(CNServer* serv, time_t currTime) {
     stepNPCPathing();
     stepSkywaySystem();
@@ -192,15 +216,15 @@ void TransportManager::tickTransportationSystem(CNServer* serv, time_t currTime)
  * If the player has disconnected or finished the route, clean up and remove them from the queue.
  */
 void TransportManager::stepSkywaySystem() {
-    
+
     // using an unordered map so we can remove finished players in one iteration
     std::unordered_map<CNSocket*, std::queue<WarpLocation>>::iterator it = SkywayQueues.begin();
     while (it != SkywayQueues.end()) {
 
         std::queue<WarpLocation>* queue = &it->second;
-        
+
         Player* plr = PlayerManager::getPlayer(it->first);
-        
+
         if (plr == nullptr) {
             // pluck out dead socket + update iterator
             it = SkywayQueues.erase(it);

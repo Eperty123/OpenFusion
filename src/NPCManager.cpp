@@ -9,6 +9,7 @@
 #include <fstream>
 #include <vector>
 #include <assert.h>
+#include <limits.h>
 
 #include "contrib/JSON.hpp"
 
@@ -119,19 +120,24 @@ void NPCManager::destroyNPC(int32_t id) {
     // remove NPC from the chunk
     Chunk* chunk = ChunkManager::chunks[entity->chunkPos];
     chunk->NPCs.erase(id);
-    
+
     // remove from viewable chunks
     removeNPC(entity->currentChunks, id);
 
     // remove from mob manager
     if (MobManager::Mobs.find(id) != MobManager::Mobs.end())
             MobManager::Mobs.erase(id);
-    
+
     // finally, remove it from the map and free it
     NPCs.erase(id);
     delete entity;
 
     std::cout << "npc removed!" << std::endl;
+}
+
+void NPCManager::updateNPCPosition(int32_t id, int X, int Y, int Z, int angle) {
+    NPCs[id]->appearanceData.iAngle = angle;
+    updateNPCPosition(id, X, Y, Z);
 }
 
 void NPCManager::updateNPCPosition(int32_t id, int X, int Y, int Z) {
@@ -257,7 +263,7 @@ void NPCManager::npcVendorSell(CNSocket* sock, CNPacketData* data) {
     memcpy(&original, item, sizeof(sItemBase));
 
     INITSTRUCT(sP_FE2CL_REP_PC_VENDOR_ITEM_SELL_SUCC, resp);
-    
+
     int sellValue = itemData->sellPrice * req->iItemCnt;
 
     // increment taros
@@ -338,7 +344,7 @@ void NPCManager::npcVendorTable(CNSocket* sock, CNPacketData* data) {
         return; // malformed packet
 
     sP_CL2FE_REQ_PC_VENDOR_TABLE_UPDATE* req = (sP_CL2FE_REQ_PC_VENDOR_TABLE_UPDATE*)data->buf;
-    
+
     if (req->iVendorID != req->iNPC_ID || ItemManager::VendorTables.find(req->iNPC_ID) == ItemManager::VendorTables.end())
         return;
 
@@ -346,7 +352,7 @@ void NPCManager::npcVendorTable(CNSocket* sock, CNPacketData* data) {
 
     INITSTRUCT(sP_FE2CL_REP_PC_VENDOR_TABLE_UPDATE_SUCC, resp);
 
-    for (int i = 0; i < listings.size() && i < 20; i++) { // 20 is the max
+    for (int i = 0; i < (int)listings.size() && i < 20; i++) { // 20 is the max
         sItemBase base;
         base.iID = listings[i].iID;
         base.iOpt = 0;
@@ -388,7 +394,7 @@ void NPCManager::npcVendorBuyBattery(CNSocket* sock, CNPacketData* data) {
     if (plr == nullptr)
         return;
 
-    int cost = req->Item.iOpt * 100;
+    int cost = req->Item.iOpt * 10;
     if ((req->Item.iID == 3 ? (plr->batteryW >= 9999) : (plr->batteryN >= 9999)) || plr->money < cost) { // sanity check
         INITSTRUCT(sP_FE2CL_REP_PC_VENDOR_BATTERY_BUY_FAIL, failResp);
         failResp.iErrorCode = 0;
@@ -423,7 +429,7 @@ void NPCManager::npcCombineItems(CNSocket* sock, CNPacketData* data) {
 
     if (plr == nullptr)
         return;
-    
+
     if (req->iCostumeItemSlot < 0 || req->iCostumeItemSlot >= AINVEN_COUNT || req->iStatItemSlot < 0 || req->iStatItemSlot >= AINVEN_COUNT) { // sanity check 1
         INITSTRUCT(sP_FE2CL_REP_PC_ITEM_COMBINATION_FAIL, failResp);
         failResp.iCostumeItemSlot = req->iCostumeItemSlot;
@@ -502,7 +508,7 @@ void NPCManager::npcCombineItems(CNSocket* sock, CNPacketData* data) {
     resp.iNewItemSlot = req->iCostumeItemSlot;
     resp.iStatItemSlot = req->iStatItemSlot;
     resp.sNewItem = *itemLooks;
-    
+
     sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_ITEM_COMBINATION_SUCC, sizeof(sP_FE2CL_REP_PC_ITEM_COMBINATION_SUCC));
 }
 
@@ -516,7 +522,7 @@ void NPCManager::npcUnsummonHandler(CNSocket* sock, CNPacketData* data) {
 
     if (plr == nullptr || plr->accountLevel > 30)
         return;
-    
+
     sP_CL2FE_REQ_NPC_UNSUMMON* req = (sP_CL2FE_REQ_NPC_UNSUMMON*)data->buf;
     NPCManager::destroyNPC(req->iNPC_ID);
 }
@@ -526,7 +532,6 @@ void NPCManager::npcSummonHandler(CNSocket* sock, CNPacketData* data) {
         return; // malformed packet
 
     sP_CL2FE_REQ_NPC_SUMMON* req = (sP_CL2FE_REQ_NPC_SUMMON*)data->buf;
-    INITSTRUCT(sP_FE2CL_NPC_ENTER, resp);
     Player* plr = PlayerManager::getPlayer(sock);
 
     // permission & sanity check
@@ -536,20 +541,15 @@ void NPCManager::npcSummonHandler(CNSocket* sock, CNPacketData* data) {
     int team = NPCData[req->iNPCType]["m_iTeam"];
 
     assert(nextId < INT32_MAX);
-    resp.NPCAppearanceData.iNPC_ID = nextId++;
-    resp.NPCAppearanceData.iNPCType = req->iNPCType;
-    resp.NPCAppearanceData.iHP = 1000;
-    resp.NPCAppearanceData.iX = plr->x;
-    resp.NPCAppearanceData.iY = plr->y;
-    resp.NPCAppearanceData.iZ = plr->z;
+    int id = nextId++;
 
     if (team == 2) {
-        NPCs[resp.NPCAppearanceData.iNPC_ID] = new Mob(plr->x, plr->y, plr->z, plr->instanceID, req->iNPCType, NPCData[req->iNPCType], resp.NPCAppearanceData.iNPC_ID);
-        MobManager::Mobs[resp.NPCAppearanceData.iNPC_ID] = (Mob*)NPCs[resp.NPCAppearanceData.iNPC_ID];
+        NPCs[id] = new Mob(plr->x, plr->y, plr->z, plr->instanceID, req->iNPCType, NPCData[req->iNPCType], id);
+        MobManager::Mobs[id] = (Mob*)NPCs[id];
     } else
-        NPCs[resp.NPCAppearanceData.iNPC_ID] = new BaseNPC(plr->x, plr->y, plr->z, plr->instanceID, req->iNPCType, resp.NPCAppearanceData.iNPC_ID);
+        NPCs[id] = new BaseNPC(plr->x, plr->y, plr->z, plr->instanceID, req->iNPCType, id);
 
-    updateNPCPosition(resp.NPCAppearanceData.iNPC_ID, plr->x, plr->y, plr->z);
+    updateNPCPosition(id, plr->x, plr->y, plr->z);
 }
 
 void NPCManager::npcWarpHandler(CNSocket* sock, CNPacketData* data) {
@@ -588,4 +588,25 @@ void NPCManager::handleWarp(CNSocket* sock, int32_t warpId) {
     plrv.chunkPos = std::make_tuple(0, 0, plrv.plr->instanceID);
 
     sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_WARP_USE_NPC_SUCC, sizeof(sP_FE2CL_REP_PC_WARP_USE_NPC_SUCC));
+}
+
+/*
+ * Helper function to get NPC closest to coordinates in specified chunks
+ */
+BaseNPC* NPCManager::getNearestNPC(std::vector<Chunk*> chunks, int X, int Y, int Z) {
+    BaseNPC* npc = nullptr;
+    int lastDist = INT_MAX;
+    for (auto c = chunks.begin(); c != chunks.end(); c++) { // haha get it
+        Chunk* chunk = *c;
+        for (auto _npc = chunk->NPCs.begin(); _npc != chunk->NPCs.end(); _npc++) {
+            BaseNPC* npcTemp = NPCs[*_npc];
+            int distXY = std::hypot(X - npcTemp->appearanceData.iX, Y - npcTemp->appearanceData.iY);
+            int dist = std::hypot(distXY, Z - npcTemp->appearanceData.iZ);
+            if (dist < lastDist) {
+                npc = npcTemp;
+                lastDist = dist;
+            }
+        }
+    }
+    return npc;
 }

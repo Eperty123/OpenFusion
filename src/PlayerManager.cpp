@@ -5,6 +5,8 @@
 #include "CNShared.hpp"
 #include "MissionManager.hpp"
 #include "ItemManager.hpp"
+#include "NanoManager.hpp"
+#include "GroupManager.hpp"
 #include "ChatManager.hpp"
 
 #include "settings.hpp"
@@ -39,7 +41,7 @@ void PlayerManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_GM_REQ_PC_SPECIAL_STATE_SWITCH, PlayerManager::setGMSpecialSwitchPlayer);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_VEHICLE_ON, PlayerManager::enterPlayerVehicle);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_VEHICLE_OFF, PlayerManager::exitPlayerVehicle);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_CHANGE_MENTOR, PlayerManager::changePlayerGuide);   
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_CHANGE_MENTOR, PlayerManager::changePlayerGuide);
 }
 
 void PlayerManager::addPlayer(CNSocket* key, Player plr) {
@@ -61,6 +63,8 @@ void PlayerManager::addPlayer(CNSocket* key, Player plr) {
 
 void PlayerManager::removePlayer(CNSocket* key) {
     PlayerView& view = players[key];
+
+    GroupManager::groupKickPlayer(view.plr);
 
     INITSTRUCT(sP_FE2CL_PC_EXIT, exitPacket);
     exitPacket.iID = players[key].plr->iID;
@@ -212,6 +216,26 @@ void PlayerManager::updatePlayerChunk(CNSocket* sock, int X, int Y) {
     view.currentChunks = allChunks;
 }
 
+void PlayerManager::sendPlayerTo(CNSocket* sock, int X, int Y, int Z, int I) {
+    getPlayer(sock)->instanceID = I;
+    sendPlayerTo(sock, X, Y, Z);
+}
+
+void PlayerManager::sendPlayerTo(CNSocket* sock, int X, int Y, int Z) {
+    PlayerManager::updatePlayerPosition(sock, X, Y, Z);
+    INITSTRUCT(sP_FE2CL_REP_PC_GOTO_SUCC, pkt);
+    pkt.iX = X;
+    pkt.iY = Y;
+    pkt.iZ = Z;
+
+    // force player & NPC reload
+    PlayerView& plrv = players[sock];
+    PlayerManager::removePlayerFromChunks(plrv.currentChunks, sock);
+    plrv.currentChunks.clear();
+    plrv.chunkPos = std::make_tuple(0, 0, plrv.plr->instanceID);
+    sock->sendPacket((void*)&pkt, P_FE2CL_REP_PC_GOTO_SUCC, sizeof(sP_FE2CL_REP_PC_GOTO_SUCC));
+}
+
 void PlayerManager::enterPlayer(CNSocket* sock, CNPacketData* data) {
     if (data->size != sizeof(sP_CL2FE_REQ_PC_ENTER))
         return; // ignore the malformed packet
@@ -221,6 +245,9 @@ void PlayerManager::enterPlayer(CNSocket* sock, CNPacketData* data) {
 
     // TODO: check if serialkey exists, if it doesn't send sP_FE2CL_REP_PC_ENTER_FAIL
     Player plr = CNSharedData::getPlayer(enter->iEnterSerialKey);
+
+    plr.groupCnt = 1;
+    plr.iIDGroup = plr.groupIDs[0] = plr.iID;
 
     DEBUGLOG(
         std::cout << "P_CL2FE_REQ_PC_ENTER:" << std::endl;
@@ -260,7 +287,7 @@ void PlayerManager::enterPlayer(CNSocket* sock, CNPacketData* data) {
     response.PCLoadData2CL.iActiveNanoSlotNum = -1;
     response.PCLoadData2CL.iFatigue = 50;
     response.PCLoadData2CL.PCStyle = plr.PCStyle;
-    
+
     //client doesnt read this, it gets it from charinfo
     //response.PCLoadData2CL.PCStyle2 = plr.PCStyle2;
     // inventory
@@ -290,7 +317,7 @@ void PlayerManager::enterPlayer(CNSocket* sock, CNPacketData* data) {
             /*
              * client doesn't care about NeededItem ID and Count,
              * it gets Count from Quest Inventory
-             * 
+             *
              * KillNPCCount sets RemainEnemyNum in the client
              * Yes, this is extraordinary stupid.
             */
@@ -323,7 +350,7 @@ void PlayerManager::enterPlayer(CNSocket* sock, CNPacketData* data) {
     addPlayer(sock, plr);
     //check if there is an expiring vehicle
     ItemManager::checkItemExpire(sock, getPlayer(sock));
-    
+
     //set player equip stats
     ItemManager::setItemStats(getPlayer(sock));
 }
@@ -333,7 +360,7 @@ void PlayerManager::sendToViewable(CNSocket* sock, void* buf, uint32_t type, siz
         for (CNSocket* otherSock : chunk->players) {
             if (otherSock == sock)
                 continue;
-            
+
             otherSock->sendPacket(buf, type, size);
         }
     }
@@ -366,7 +393,7 @@ void PlayerManager::movePlayer(CNSocket* sock, CNPacketData* data) {
 
     sP_CL2FE_REQ_PC_MOVE* moveData = (sP_CL2FE_REQ_PC_MOVE*)data->buf;
     updatePlayerPosition(sock, moveData->iX, moveData->iY, moveData->iZ, moveData->iAngle);
-    
+
     players[sock].plr->angle = moveData->iAngle;
     uint64_t tm = getTime();
 
@@ -629,7 +656,6 @@ void PlayerManager::gotoPlayer(CNSocket* sock, CNPacketData* data) {
 
     sP_CL2FE_REQ_PC_GOTO* gotoData = (sP_CL2FE_REQ_PC_GOTO*)data->buf;
     INITSTRUCT(sP_FE2CL_REP_PC_GOTO_SUCC, response);
-    PlayerView& plrv = players[sock];
 
     DEBUGLOG(
         std::cout << "P_CL2FE_REQ_PC_GOTO:" << std::endl;
@@ -638,16 +664,7 @@ void PlayerManager::gotoPlayer(CNSocket* sock, CNPacketData* data) {
         std::cout << "\tZ: " << gotoData->iToZ << std::endl;
     )
 
-    response.iX = plrv.plr->x = gotoData->iToX;
-    response.iY = plrv.plr->y = gotoData->iToY;
-    response.iZ = plrv.plr->z = gotoData->iToZ;
-
-    // force player & NPC reload
-    PlayerManager::removePlayerFromChunks(plrv.currentChunks, sock);
-    plrv.currentChunks.clear();
-    plrv.chunkPos = std::make_tuple(0, 0, plrv.plr->instanceID);
-
-    sock->sendPacket((void*)&response, P_FE2CL_REP_PC_GOTO_SUCC, sizeof(sP_FE2CL_REP_PC_GOTO_SUCC));
+    sendPlayerTo(sock, gotoData->iToX, gotoData->iToY, gotoData->iToZ);
 }
 
 void PlayerManager::setSpecialPlayer(CNSocket* sock, CNPacketData* data) {
@@ -729,22 +746,32 @@ void PlayerManager::revivePlayer(CNSocket* sock, CNPacketData* data) {
     INITSTRUCT(sP_FE2CL_REP_PC_REGEN_SUCC, response);
     INITSTRUCT(sP_FE2CL_PC_REGEN, resp2);
 
-    // Nanos
     int activeSlot = -1;
-    for (int n = 0; n < 3; n++) {
-        int nanoID = plr->equippedNanos[n];
-        plr->Nanos[nanoID].iStamina = 75; // max is 150, so 75 is half
-        response.PCRegenData.Nanos[n] = plr->Nanos[nanoID];
-        if (plr->activeNano == nanoID) {
-            activeSlot = n;
+
+    if (reviveData->iRegenType == 3 && plr->iConditionBitFlag & CSB_BIT_PHOENIX) {
+        // nano revive
+        plr->Nanos[plr->activeNano].iStamina = 0;
+        NanoManager::nanoUnbuff(sock, CSB_BIT_PHOENIX, ECSB_PHOENIX, 0, false);
+        plr->HP = PC_MAXHEALTH(plr->level);
+    } else {
+        plr->x = target.x;
+        plr->y = target.y;
+        plr->z = target.z;
+
+        if (reviveData->iRegenType != 5)
+            plr->HP = PC_MAXHEALTH(plr->level);
+
+        for (int i = 0; i < 3; i++) {
+            int nanoID = plr->equippedNanos[i];
+
+            // halve nano health if respawning
+            if (reviveData->iRegenType != 5)
+                plr->Nanos[nanoID].iStamina = 75; // max is 150, so 75 is half
+            response.PCRegenData.Nanos[i] = plr->Nanos[nanoID];
+            if (plr->activeNano == nanoID)
+                activeSlot = i;
         }
     }
-
-    // Update player
-    plr->x = target.x;
-    plr->y = target.y;
-    plr->z = target.z;
-    plr->HP = PC_MAXHEALTH(plr->level);
 
     // Response parameters
     response.PCRegenData.iActiveNanoSlotNum = activeSlot;
@@ -753,8 +780,8 @@ void PlayerManager::revivePlayer(CNSocket* sock, CNPacketData* data) {
     response.PCRegenData.iZ = plr->z;
     response.PCRegenData.iHP = plr->HP;
     response.iFusionMatter = plr->fusionmatter;
-    response.bMoveLocation = reviveData->eIL;
-    response.PCRegenData.iMapNum = reviveData->iIndex;
+    response.bMoveLocation = 0;
+    response.PCRegenData.iMapNum = 0;
 
     sock->sendPacket((void*)&response, P_FE2CL_REP_PC_REGEN_SUCC, sizeof(sP_FE2CL_REP_PC_REGEN_SUCC));
 
@@ -765,6 +792,9 @@ void PlayerManager::revivePlayer(CNSocket* sock, CNPacketData* data) {
     resp2.PCRegenDataForOtherPC.iZ = plr->z;
     resp2.PCRegenDataForOtherPC.iHP = plr->HP;
     resp2.PCRegenDataForOtherPC.iAngle = plr->angle;
+    resp2.PCRegenDataForOtherPC.iConditionBitFlag = plr->iConditionBitFlag;
+    resp2.PCRegenDataForOtherPC.iPCState = plr->iPCState;
+    resp2.PCRegenDataForOtherPC.iSpecialState = plr->iSpecialState;
     resp2.PCRegenDataForOtherPC.Nano = plr->Nanos[plr->activeNano];
 
     sendToViewable(sock, (void*)&resp2, P_FE2CL_PC_REGEN, sizeof(sP_FE2CL_PC_REGEN));
@@ -841,7 +871,7 @@ void PlayerManager::changePlayerGuide(CNSocket *sock, CNPacketData *data) {
     resp.iMentor = pkt->iMentor;
     resp.iMentorCnt = 1;
     resp.iFusionMatter = plr->fusionmatter; // no cost
-    
+
     sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_CHANGE_MENTOR_SUCC, sizeof(sP_FE2CL_REP_PC_CHANGE_MENTOR_SUCC));
     // if it's changed from computress
     if (plr->mentor == 5) {
@@ -864,7 +894,7 @@ void PlayerManager::changePlayerGuide(CNSocket *sock, CNPacketData *data) {
 Player *PlayerManager::getPlayer(CNSocket* key) {
     if (players.find(key) != players.end())
         return players[key].plr;
-    
+
     return nullptr;
 }
 
@@ -917,7 +947,14 @@ void PlayerManager::setSpecialState(CNSocket* sock, CNPacketData* data) {
 
     Player *plr = getPlayer(sock);
 
+    if (plr == nullptr)
+        return;
+
     sP_CL2FE_GM_REQ_PC_SPECIAL_STATE_SWITCH* setData = (sP_CL2FE_GM_REQ_PC_SPECIAL_STATE_SWITCH*)data->buf;
+
+    // HACK: work around the invisible weapon bug
+    if (setData->iSpecialStateFlag == CN_SPECIAL_STATE_FLAG__FULL_UI)
+        ItemManager::updateEquips(sock, plr);
 
     INITSTRUCT(sP_FE2CL_PC_SPECIAL_STATE_CHANGE, response);
 
@@ -931,7 +968,15 @@ void PlayerManager::setSpecialState(CNSocket* sock, CNPacketData* data) {
     sendToViewable(sock, (void*)&response, P_FE2CL_PC_SPECIAL_STATE_CHANGE, sizeof(sP_FE2CL_PC_SPECIAL_STATE_CHANGE));
 }
 
-CNSocket* PlayerManager::getSockFromID(int32_t iID) {
+Player *PlayerManager::getPlayerFromID(int32_t iID) {
+    for (auto& pair : PlayerManager::players)
+        if (pair.second.plr->iID == iID)
+            return pair.second.plr;
+
+    return nullptr;
+}
+
+CNSocket *PlayerManager::getSockFromID(int32_t iID) {
     for (auto& pair : PlayerManager::players)
         if (pair.second.plr->iID == iID)
             return pair.first;

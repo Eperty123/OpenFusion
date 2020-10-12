@@ -1,4 +1,5 @@
 #include "Database.hpp"
+#include "Database.hpp"
 #include "contrib/bcrypt/BCrypt.hpp"
 #include "CNProtocol.hpp"
 #include <string>
@@ -188,7 +189,7 @@ int Database::createCharacter(sP_CL2LS_REQ_SAVE_CHAR_NAME* save, int AccountID)
         return -1;
 
     DbPlayer create = {};
-    
+
     //set timestamp
     create.Created = getTimestamp();
     // save packet data
@@ -425,14 +426,14 @@ Player Database::DbToPlayer(DbPlayer player) {
     result.PCStyle.iClass = player.Class;
     result.PCStyle.iEyeColor = player.EyeColor;
     result.PCStyle.iFaceStyle = player.FaceStyle;
-    U8toU16(player.FirstName, result.PCStyle.szFirstName);
+    U8toU16(player.FirstName, result.PCStyle.szFirstName, sizeof(result.PCStyle.szFirstName));
     result.PCStyle.iGender = player.Gender;
     result.PCStyle.iHairColor = player.HairColor;
     result.PCStyle.iHairStyle = player.HairStyle;
     result.PCStyle.iHeight = player.Height;
     result.HP = player.HP;
     result.accountLevel = player.AccountLevel;
-    U8toU16(player.LastName, result.PCStyle.szLastName);
+    U8toU16(player.LastName, result.PCStyle.szLastName, sizeof(result.PCStyle.szLastName));
     result.level = player.Level;
     result.PCStyle.iNameCheck = player.NameCheck;
     result.PCStyle2.iPayzoneFlag = player.PayZoneFlag;
@@ -456,7 +457,6 @@ Player Database::DbToPlayer(DbPlayer player) {
     result.equippedNanos[1] = player.Nano2;
     result.equippedNanos[2] = player.Nano3;
 
-    result.dotDamage = false;
     result.inCombat = false;
 
     result.iWarpLocationFlag = player.WarpLocationFlag;
@@ -466,7 +466,7 @@ Player Database::DbToPlayer(DbPlayer player) {
     Database::getInventory(&result);
     Database::removeExpiredVehicles(&result);
     Database::getNanos(&result);
-    Database::getQuests(&result);   
+    Database::getQuests(&result);
 
     // load completed quests
     memcpy(&result.aQuestFlag, player.QuestFlag.data(), std::min(sizeof(result.aQuestFlag), player.QuestFlag.size()));
