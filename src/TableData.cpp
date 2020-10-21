@@ -14,7 +14,17 @@
 
 std::map<int32_t, std::vector<WarpLocation>> TableData::RunningSkywayRoutes;
 std::map<int32_t, int> TableData::RunningNPCRotations;
+std::map<int32_t, int> TableData::RunningNPCMapNumbers;
 std::map<int32_t, BaseNPC*> TableData::RunningMobs;
+
+class TableException : public std::exception {
+public:
+    std::string msg;
+
+    TableException(std::string m) : std::exception() { msg = m; }
+
+    const char *what() const throw() { return msg.c_str(); }
+};
 
 void TableData::init() {
     int32_t nextId = 0;
@@ -26,25 +36,23 @@ void TableData::init() {
 
         // read file into json
         inFile >> npcData;
-
         for (nlohmann::json::iterator _npc = npcData.begin(); _npc != npcData.end(); _npc++) {
             auto npc = _npc.value();
-            BaseNPC *tmp = new BaseNPC(npc["x"], npc["y"], npc["z"], INSTANCE_OVERWORLD, npc["id"], nextId);
+            int instanceID = npc.find("mapNum") == npc.end() ? INSTANCE_OVERWORLD : (int)npc["mapNum"];
+            BaseNPC *tmp = new BaseNPC(npc["x"], npc["y"], npc["z"], npc["angle"], instanceID, npc["id"], nextId);
 
             NPCManager::NPCs[nextId] = tmp;
             NPCManager::updateNPCPosition(nextId, npc["x"], npc["y"], npc["z"]);
             nextId++;
 
             if (npc["id"] == 641 || npc["id"] == 642)
-                NPCManager::RespawnPoints.push_back({ npc["x"], npc["y"], ((int)npc["z"]) + RESURRECT_HEIGHT });
+                NPCManager::RespawnPoints.push_back({ npc["x"], npc["y"], ((int)npc["z"]) + RESURRECT_HEIGHT, instanceID });
         }
-
     }
     catch (const std::exception& err) {
-        std::cerr << "[WARN] Malformed NPCs.json file! Reason:" << err.what() << std::endl;
+        std::cerr << "[FATAL] Malformed NPCs.json file! Reason:" << err.what() << std::endl;
+        terminate(0);
     }
-
-    loadPaths(&nextId); // load paths
 
     // load everything else from xdttable
     std::cout << "[INFO] Parsing xdt.json..." << std::endl;
@@ -63,7 +71,7 @@ void TableData::init() {
 
         for (nlohmann::json::iterator _warp = warpData.begin(); _warp != warpData.end(); _warp++) {
             auto warp = _warp.value();
-            WarpLocation warpLoc = { warp["m_iToX"], warp["m_iToY"], warp["m_iToZ"] };
+            WarpLocation warpLoc = { warp["m_iToX"], warp["m_iToY"], warp["m_iToZ"], warp["m_iToMapNum"], warp["m_iIsInstance"], warp["m_iLimit_TaskID"], warp["m_iNpcNumber"] };
             int warpID = warp["m_iWarpNumber"];
             NPCManager::Warps[warpID] = warpLoc;
         }
@@ -121,7 +129,7 @@ void TableData::init() {
                 auto item = _item.value();
                 int typeOverride = getItemType(i); // used for special cases where iEquipLoc doesn't indicate item type
                 ItemManager::ItemData[std::pair<int32_t, int32_t>(item["m_iItemNumber"], typeOverride != -1 ? typeOverride : (int)item["m_iEquipLoc"])]
-                = { item["m_iTradeAble"] == 1, item["m_iSellAble"] == 1, item["m_iItemPrice"], item["m_iItemSellPrice"], item["m_iStackNumber"], i > 9 ? 0 : (int)item["m_iMinReqLev"], i > 9 ? 1 : (int)item["m_iRarity"], i > 9 ? 0 : (int)item["m_iPointRat"], i > 9 ? 0 : (int)item["m_iGroupRat"], i > 9 ? 0 : (int)item["m_iDefenseRat"] };
+                = { item["m_iTradeAble"] == 1, item["m_iSellAble"] == 1, item["m_iItemPrice"], item["m_iItemSellPrice"], item["m_iStackNumber"], i > 9 ? 0 : (int)item["m_iMinReqLev"], i > 9 ? 1 : (int)item["m_iRarity"], i > 9 ? 0 : (int)item["m_iPointRat"], i > 9 ? 0 : (int)item["m_iGroupRat"], i > 9 ? 0 : (int)item["m_iDefenseRat"], i > 9 ? 0 : (int)item["m_iReqSex"] };
             }
         }
 
@@ -157,7 +165,7 @@ void TableData::init() {
 
         std::cout << "[INFO] Loaded " << ItemManager::CrocPotTable.size() << " croc pot value sets" << std::endl;
 
-        //load nano info
+        // load nano info
         nlohmann::json nanoInfo = xdtData["m_pNanoTable"]["m_pNanoData"];
         for (nlohmann::json::iterator _nano = nanoInfo.begin(); _nano != nanoInfo.end(); _nano++) {
             auto nano = _nano.value();
@@ -169,7 +177,8 @@ void TableData::init() {
         std::cout << "[INFO] Loaded " << NanoManager::NanoTable.size() << " nanos" << std::endl;
     }
     catch (const std::exception& err) {
-        std::cerr << "[WARN] Malformed xdt.json file! Reason:" << err.what() << std::endl;
+        std::cerr << "[FATAL] Malformed xdt.json file! Reason:" << err.what() << std::endl;
+        terminate(0);
     }
 
     // load temporary mob dump
@@ -183,7 +192,8 @@ void TableData::init() {
         for (nlohmann::json::iterator _npc = npcData.begin(); _npc != npcData.end(); _npc++) {
             auto npc = _npc.value();
             auto td = NPCManager::NPCData[(int)npc["iNPCType"]];
-            Mob *tmp = new Mob(npc["iX"], npc["iY"], npc["iZ"], INSTANCE_OVERWORLD, npc["iNPCType"], npc["iHP"], npc["iAngle"], td, nextId);
+            uint64_t instanceID = npc.find("iMapNum") == npc.end() ? INSTANCE_OVERWORLD : (int)npc["iMapNum"];
+            Mob *tmp = new Mob(npc["iX"], npc["iY"], npc["iZ"], npc["iAngle"], instanceID, npc["iNPCType"], npc["iHP"], td, nextId);
 
             NPCManager::NPCs[nextId] = tmp;
             MobManager::Mobs[nextId] = (Mob*)NPCManager::NPCs[nextId];
@@ -195,8 +205,13 @@ void TableData::init() {
         std::cout << "[INFO] Populated " << NPCManager::NPCs.size() << " NPCs" << std::endl;
     }
     catch (const std::exception& err) {
-        std::cerr << "[WARN] Malformed mobs.json file! Reason:" << err.what() << std::endl;
+        std::cerr << "[FATAL] Malformed mobs.json file! Reason:" << err.what() << std::endl;
+        terminate(0);
     }
+
+    loadDrops();
+
+    loadPaths(&nextId); // load paths
 
     loadGruntwork(&nextId);
 
@@ -208,8 +223,7 @@ void TableData::init() {
  */
 int TableData::getItemType(int itemSet) {
     int overriden;
-    switch (itemSet)
-    {
+    switch (itemSet) {
     case 11: // Chest items don't have iEquipLoc and are type 9.
         overriden = 9;
         break;
@@ -244,19 +258,22 @@ void TableData::loadPaths(int* nextId) {
         std::cout << "[INFO] Loaded " << TransportManager::SkywayPaths.size() << " skyway paths" << std::endl;
 
         // slider circuit
-        int sliders = 0;
+        int stops = 0;
+        int pos = 0;
         nlohmann::json pathDataSlider = pathData["slider"];
         for (nlohmann::json::iterator _sliderPoint = pathDataSlider.begin(); _sliderPoint != pathDataSlider.end(); _sliderPoint++) {
             auto sliderPoint = _sliderPoint.value();
-            if (sliderPoint["stop"] && sliders % 2 == 0) { // check if this point in the circuit is a stop
+            if (sliderPoint["stop"]) { // check if this point in the circuit is a stop
                 // spawn a slider
-                BaseNPC* slider = new BaseNPC(sliderPoint["iX"], sliderPoint["iY"], sliderPoint["iZ"], 1, (*nextId)++, NPC_BUS);
+                BaseNPC* slider = new BaseNPC(sliderPoint["iX"], sliderPoint["iY"], sliderPoint["iZ"], 0, INSTANCE_OVERWORLD, 1, (*nextId)++, NPC_BUS);
                 NPCManager::NPCs[slider->appearanceData.iNPC_ID] = slider;
                 NPCManager::updateNPCPosition(slider->appearanceData.iNPC_ID, slider->appearanceData.iX, slider->appearanceData.iY, slider->appearanceData.iZ);
                 // set slider path to a rotation of the circuit
-                constructPathSlider(pathDataSlider, 0, slider->appearanceData.iNPC_ID);
-                sliders++;
+                constructPathSlider(pathDataSlider, pos, slider->appearanceData.iNPC_ID);
+
+                stops++;
             }
+            pos++;
         }
 
         // npc paths
@@ -264,10 +281,143 @@ void TableData::loadPaths(int* nextId) {
         for (nlohmann::json::iterator npcPath = pathDataNPC.begin(); npcPath != pathDataNPC.end(); npcPath++) {
             constructPathNPC(npcPath);
         }
+
+        // mob paths
+        pathDataNPC = pathData["mob"];
+        for (nlohmann::json::iterator npcPath = pathDataNPC.begin(); npcPath != pathDataNPC.end(); npcPath++) {
+            for (auto& pair : MobManager::Mobs) {
+                if (pair.second->appearanceData.iNPCType == npcPath.value()["iNPCType"]) {
+                    std::cout << "[INFO] Using static path for mob " << pair.second->appearanceData.iNPCType << " with ID " << pair.first << std::endl;
+
+                    auto firstPoint = npcPath.value()["points"][0];
+                    if (firstPoint["iX"] != pair.second->spawnX || firstPoint["iY"] != pair.second->spawnY) {
+                        std::cout << "[FATAL] The first point of the route for mob " << pair.first <<
+                            " (type " << pair.second->appearanceData.iNPCType << ") does not correspond with its spawn point." << std::endl;
+                        terminate(0);
+                    }
+
+                    constructPathNPC(npcPath, pair.first);
+                    pair.second->staticPath = true;
+                    break; // only one NPC per path
+                }
+            }
+        }
         std::cout << "[INFO] Loaded " << TransportManager::NPCQueues.size() << " NPC paths" << std::endl;
     }
     catch (const std::exception& err) {
-        std::cerr << "[WARN] Malformed paths.json file! Reason:" << err.what() << std::endl;
+        std::cerr << "[FATAL] Malformed paths.json file! Reason:" << err.what() << std::endl;
+        terminate(0);
+    }
+}
+
+/*
+ * Load drops data from JSON.
+ * This has to be called after reading xdt because it reffers to ItemData!!!
+ */
+void TableData::loadDrops() {
+    try {
+        std::ifstream inFile(settings::DROPSJSON);
+        nlohmann::json dropData;
+
+        // read file into json
+        inFile >> dropData;
+
+        // MobDropChances
+        nlohmann::json mobDropChances = dropData["MobDropChances"];
+        for (nlohmann::json::iterator _dropChance = mobDropChances.begin(); _dropChance != mobDropChances.end(); _dropChance++) {
+            auto dropChance = _dropChance.value();
+            MobDropChance toAdd = {};
+            toAdd.dropChance = (int)dropChance["DropChance"];
+            for (nlohmann::json::iterator _cratesRatio = dropChance["CratesRatio"].begin(); _cratesRatio != dropChance["CratesRatio"].end(); _cratesRatio++) {
+                toAdd.cratesRatio.push_back((int)_cratesRatio.value());
+            }
+            MobManager::MobDropChances[(int)dropChance["Type"]] = toAdd;
+        }
+
+        // MobDrops
+        nlohmann::json mobDrops = dropData["MobDrops"];
+        for (nlohmann::json::iterator _drop = mobDrops.begin(); _drop != mobDrops.end(); _drop++) {
+            auto drop = _drop.value();
+            MobDrop toAdd = {};
+            for (nlohmann::json::iterator _crates = drop["CrateIDs"].begin(); _crates != drop["CrateIDs"].end(); _crates++) {
+                toAdd.crateIDs.push_back((int)_crates.value());
+            }
+
+            toAdd.dropChanceType = (int)drop["DropChance"];
+            // Check if DropChance exists
+            if (MobManager::MobDropChances.find(toAdd.dropChanceType) == MobManager::MobDropChances.end()) {
+                throw TableException(" MobDropChance not found: " + std::to_string((toAdd.dropChanceType)));
+            }
+            // Check if number of crates is correct
+            if (!(MobManager::MobDropChances[(int)drop["DropChance"]].cratesRatio.size() == toAdd.crateIDs.size())) {
+                throw TableException(" DropType " + std::to_string((int)drop["DropType"]) + " contains invalid number of crates");
+            }
+
+            toAdd.taros = (int)drop["Taros"];
+            toAdd.fm = (int)drop["FM"];
+            toAdd.boosts = (int)drop["Boosts"];
+            MobManager::MobDrops[(int)drop["DropType"]] = toAdd;
+        }
+
+        std::cout << "[INFO] Loaded " << MobManager::MobDrops.size() << " Mob Drop Types"<<  std::endl;
+
+        // Rarity Ratios
+        nlohmann::json rarities = dropData["RarityRatios"];
+        for (nlohmann::json::iterator _rarity = rarities.begin(); _rarity != rarities.end(); _rarity++) {
+            auto rarity = _rarity.value();
+            std::vector<int> toAdd;
+            for (nlohmann::json::iterator _ratio = rarity["Ratio"].begin(); _ratio != rarity["Ratio"].end(); _ratio++){
+                toAdd.push_back((int)_ratio.value());
+            }
+            ItemManager::RarityRatios[(int)rarity["Type"]] = toAdd;
+        }
+
+        // Crates
+        nlohmann::json crates = dropData["Crates"];
+        for (nlohmann::json::iterator _crate = crates.begin(); _crate != crates.end(); _crate++) {
+            auto crate = _crate.value();
+            Crate toAdd;
+            toAdd.rarityRatioId = (int)crate["RarityRatio"];
+            for (nlohmann::json::iterator _itemSet = crate["ItemSets"].begin(); _itemSet != crate["ItemSets"].end(); _itemSet++) {
+                toAdd.itemSets.push_back((int)_itemSet.value());
+            }
+            ItemManager::Crates[(int)crate["Id"]] = toAdd;
+        }
+
+        // Crate Items
+        nlohmann::json items = dropData["Items"];
+        int itemCount = 0;
+        for (nlohmann::json::iterator _item = items.begin(); _item != items.end(); _item++) {
+            auto item = _item.value();
+            std::pair<int32_t, int32_t> itemSetkey = std::make_pair((int)item["ItemSet"], (int)item["Rarity"]);
+            std::pair<int32_t, int32_t> itemDataKey = std::make_pair((int)item["Id"], (int)item["Type"]);
+
+            if (ItemManager::ItemData.find(itemDataKey) == ItemManager::ItemData.end()) {
+                char buff[255];
+                sprintf(buff, "Unknown item with Id %d and Type %d", (int)item["Id"], (int)item["Type"]);
+                throw TableException(std::string(buff));
+            }
+
+            std::map<std::pair<int32_t, int32_t>, Item>::iterator toAdd = ItemManager::ItemData.find(itemDataKey);
+
+            // if item collection doesn't exist, start a new one
+            if (ItemManager::CrateItems.find(itemSetkey) == ItemManager::CrateItems.end()) {
+                std::vector<std::map<std::pair<int32_t, int32_t>, Item>::iterator> vector;
+                vector.push_back(toAdd);
+                ItemManager::CrateItems[itemSetkey] = vector;
+            } else // else add a new element to existing collection
+                ItemManager::CrateItems[itemSetkey].push_back(toAdd);
+
+            itemCount++;
+        }
+
+        std::cout << "[INFO] Loaded " << ItemManager::Crates.size() << " Crates containing "
+                  << itemCount << " items" << std::endl;
+
+    }
+    catch (const std::exception& err) {
+        std::cerr << "[FATAL] Malformed drops.json file! Reason:" << err.what() << std::endl;
+        terminate(0);
     }
 }
 
@@ -305,13 +455,14 @@ void TableData::constructPathSlider(nlohmann::json points, int rotations, int sl
         for (int i = 0; i < stopTime + 1; i++) // repeat point if it's a stop
             route.push(from); // add point A to the queue
         WarpLocation to = { point["iX"] , point["iY"] , point["iZ"] }; // point B coords
+        // we may need to change this later; right now, the speed is cut before and after stops (no accel)
         float curve = 1;
         if (stopTime > 0) { // point A is a stop
-            curve = 2.0f;
+            curve = 0.375f;//2.0f;
         } else if (point["stop"]) { // point B is a stop
-            curve = 0.35f;
+            curve = 0.375f;//0.35f;
         }
-        TransportManager::lerp(&route, from, to, SLIDER_SPEED, curve); // lerp from A to B (arbitrary speed)
+        TransportManager::lerp(&route, from, to, SLIDER_SPEED * curve, 1); // lerp from A to B (arbitrary speed)
         from = to; // update point A
         stopTime = point["stop"] ? SLIDER_STOP_TICKS : 0;
     }
@@ -319,7 +470,7 @@ void TableData::constructPathSlider(nlohmann::json points, int rotations, int sl
     TransportManager::NPCQueues[sliderID] = route;
 }
 
-void TableData::constructPathNPC(nlohmann::json::iterator _pathData) {
+void TableData::constructPathNPC(nlohmann::json::iterator _pathData, int32_t id) {
     auto pathData = _pathData.value();
     // Interpolate
     nlohmann::json pathPoints = pathData["points"];
@@ -337,7 +488,11 @@ void TableData::constructPathNPC(nlohmann::json::iterator _pathData) {
         from = to; // update point A
         stopTime = point["stop"];
     }
-    TransportManager::NPCQueues[pathData["iNPCID"]] = points;
+
+    if (id == 0)
+        id = pathData["iNPCID"];
+
+    TransportManager::NPCQueues[id] = points;
 }
 
 // load gruntwork output; if it exists
@@ -379,27 +534,49 @@ void TableData::loadGruntwork(int32_t *nextId) {
             RunningNPCRotations[npcID] = angle;
         }
 
+        // npc map numbers
+        auto npcMap = gruntwork["instances"];
+        for (auto _map = npcMap.begin(); _map != npcMap.end(); _map++) {
+            int32_t npcID = _map.value()["iNPCID"];
+            uint64_t instanceID = _map.value()["iMapNum"];
+            if (NPCManager::NPCs.find(npcID) == NPCManager::NPCs.end())
+                continue; // NPC not found
+            BaseNPC* npc = NPCManager::NPCs[npcID];
+            NPCManager::updateNPCInstance(npc->appearanceData.iNPC_ID, instanceID);
+
+            RunningNPCMapNumbers[npcID] = instanceID;
+        }
+
         // mobs
         auto mobs = gruntwork["mobs"];
         for (auto _mob = mobs.begin(); _mob != mobs.end(); _mob++) {
             auto mob = _mob.value();
+            BaseNPC *npc;
+            int id = (*nextId)++;
+            uint64_t instanceID = mob.find("iMapNum") == mob.end() ? INSTANCE_OVERWORLD : (int)mob["iMapNum"];
 
-            Mob *npc = new Mob(mob["iX"], mob["iY"], mob["iZ"], INSTANCE_OVERWORLD, mob["iNPCType"],
-                NPCManager::NPCData[(int)mob["iNPCType"]], (*nextId)++);
+            if (NPCManager::NPCData[(int)mob["iNPCType"]]["m_iTeam"] == 2) {
+                npc = new Mob(mob["iX"], mob["iY"], mob["iZ"], instanceID, mob["iNPCType"],
+                    NPCManager::NPCData[(int)mob["iNPCType"]], id);
+
+                // re-enable respawning
+                ((Mob*)npc)->summoned = false;
+
+                MobManager::Mobs[npc->appearanceData.iNPC_ID] = (Mob*)npc;
+            } else {
+                npc = new BaseNPC(mob["iX"], mob["iY"], mob["iZ"], mob["iAngle"], instanceID, mob["iNPCType"], id);
+            }
 
             NPCManager::NPCs[npc->appearanceData.iNPC_ID] = npc;
-            MobManager::Mobs[npc->appearanceData.iNPC_ID] = npc;
             TableData::RunningMobs[npc->appearanceData.iNPC_ID] = npc;
             NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, mob["iX"], mob["iY"], mob["iZ"]);
-
-            // re-enable respawning
-            npc->summoned = false;
         }
 
         std::cout << "[INFO] Loaded gruntwork.json" << std::endl;
     }
     catch (const std::exception& err) {
-        std::cerr << "[WARN] Malformed gruntwork.json file! Reason:" << err.what() << std::endl;
+        std::cerr << "[FATAL] Malformed gruntwork.json file! Reason:" << err.what() << std::endl;
+        terminate(0);
     }
 }
 
@@ -412,7 +589,7 @@ void TableData::flush() {
         nlohmann::json route;
 
         route["iRouteID"] = (int)pair.first;
-        route["iMonkeySpeed"] = 1500; // TODO
+        route["iMonkeySpeed"] = 1500;
 
         std::cout << "serializing mss route " << (int)pair.first << std::endl;
         for (WarpLocation& point : pair.second) {
@@ -437,22 +614,47 @@ void TableData::flush() {
         gruntwork["rotations"].push_back(rotation);
     }
 
+    for (auto& pair : RunningNPCMapNumbers) {
+        nlohmann::json mapNumber;
+
+        mapNumber["iNPCID"] = (int)pair.first;
+        mapNumber["iMapNum"] = pair.second;
+
+        gruntwork["instances"].push_back(mapNumber);
+    }
+
     for (auto& pair : RunningMobs) {
         nlohmann::json mob;
-        Mob *m = (Mob*)pair.second; // we need spawnX, etc
+        BaseNPC *npc = pair.second;
 
         if (NPCManager::NPCs.find(pair.first) == NPCManager::NPCs.end())
             continue;
 
-        // NOTE: this format deviates slightly from the one in mobs.json
-        mob["iNPCType"] = (int)m->appearanceData.iNPCType;
-        mob["iHP"] = (int)m->maxHealth;
-        mob["iX"] = m->spawnX;
-        mob["iY"] = m->spawnY;
-        mob["iZ"] = m->spawnZ;
-        // this is a bit imperfect, since this is a live angle, not a spawn angle so it'll change often, but eh
-        mob["iAngle"] = m->appearanceData.iAngle;
+        int x, y, z, hp;
+        if (npc->npcClass == NPC_MOB) {
+            Mob *m = (Mob*)npc;
+            x = m->spawnX;
+            y = m->spawnY;
+            z = m->spawnZ;
+            hp = m->maxHealth;
+        } else {
+            x = npc->appearanceData.iX;
+            y = npc->appearanceData.iY;
+            z = npc->appearanceData.iZ;
+            hp = npc->appearanceData.iHP;
+        }
 
+        // NOTE: this format deviates slightly from the one in mobs.json
+        mob["iNPCType"] = (int)npc->appearanceData.iNPCType;
+        mob["iHP"] = hp;
+        mob["iX"] = x;
+        mob["iY"] = y;
+        mob["iZ"] = z;
+        mob["iMapNum"] = MAPNUM(npc->instanceID);
+        // this is a bit imperfect, since this is a live angle, not a spawn angle so it'll change often, but eh
+        mob["iAngle"] = npc->appearanceData.iAngle;
+
+        // it's called mobs, but really it's everything
         gruntwork["mobs"].push_back(mob);
     }
 

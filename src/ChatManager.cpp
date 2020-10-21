@@ -6,6 +6,7 @@
 #include "TableData.hpp"
 #include "NPCManager.hpp"
 #include "MobManager.hpp"
+#include "MissionManager.hpp"
 
 #include <sstream>
 #include <iterator>
@@ -43,21 +44,12 @@ bool runCmd(std::string full, CNSocket* sock) {
 }
 
 void helpCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
-    ChatManager::sendServerMessage(sock, "Commands available to you");
+    ChatManager::sendServerMessage(sock, "Commands available to you:");
     Player *plr = PlayerManager::getPlayer(sock);
-    int i = 1;
 
     for (auto& cmd : ChatManager::commands) {
         if (cmd.second.requiredAccLevel >= plr->accountId)
             ChatManager::sendServerMessage(sock, "/" + cmd.first + (cmd.second.help.length() > 0 ? " - " + cmd.second.help : ""));
-    }
-}
-
-void testCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
-    ChatManager::sendServerMessage(sock, "Test command is working! Here are your passed args:");
-
-    for (std::string arg : args) {
-        ChatManager::sendServerMessage(sock, arg);
     }
 }
 
@@ -204,7 +196,7 @@ void mssCommand(std::string full, std::vector<std::string>& args, CNSocket* sock
 
 void summonWCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
     if (args.size() < 2) {
-        ChatManager::sendServerMessage(sock, "/level: no mob type specified");
+        ChatManager::sendServerMessage(sock, "/summonW: no mob type specified");
         return;
     }
     Player* plr = PlayerManager::getPlayer(sock);
@@ -224,26 +216,47 @@ void summonWCommand(std::string full, std::vector<std::string>& args, CNSocket* 
 
     assert(NPCManager::nextId < INT32_MAX);
 
+#define EXTRA_HEIGHT 200
     BaseNPC *npc = nullptr;
+    int id = NPCManager::nextId++;
     if (team == 2) {
-        npc = new Mob(plr->x, plr->y, plr->z, plr->instanceID, type, NPCManager::NPCData[type], NPCManager::nextId++);
-        npc->appearanceData.iAngle = (plr->angle + 180) % 360;
-
-        NPCManager::NPCs[npc->appearanceData.iNPC_ID] = npc;
+        npc = new Mob(plr->x, plr->y, plr->z + EXTRA_HEIGHT, plr->instanceID, type, NPCManager::NPCData[type], id);
         MobManager::Mobs[npc->appearanceData.iNPC_ID] = (Mob*)npc;
 
         // re-enable respawning
         ((Mob*)npc)->summoned = false;
     } else {
-        ChatManager::sendServerMessage(sock, "Error: /summonW only supports Mobs at this time.");
-        return;
+        npc = new BaseNPC(plr->x, plr->y, plr->z + EXTRA_HEIGHT, 0, plr->instanceID, type, id);
     }
+
+    npc->appearanceData.iAngle = (plr->angle + 180) % 360;
+    NPCManager::NPCs[npc->appearanceData.iNPC_ID] = npc;
 
     NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, plr->x, plr->y, plr->z);
 
+    // if we're in a lair, we need to spawn the NPC in both the private instance and the template
+    if (PLAYERID(plr->instanceID) != 0) {
+        id = NPCManager::nextId++;
+
+        if (team == 2) {
+            npc = new Mob(plr->x, plr->y, plr->z + EXTRA_HEIGHT, MAPNUM(plr->instanceID), type, NPCManager::NPCData[type], id);
+
+            MobManager::Mobs[npc->appearanceData.iNPC_ID] = (Mob*)npc;
+
+            ((Mob*)npc)->summoned = false;
+        } else {
+            npc = new BaseNPC(plr->x, plr->y, plr->z + EXTRA_HEIGHT, 0, MAPNUM(plr->instanceID), type, id);
+        }
+
+        npc->appearanceData.iAngle = (plr->angle + 180) % 360;
+        NPCManager::NPCs[npc->appearanceData.iNPC_ID] = npc;
+
+        NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, plr->x, plr->y, plr->z);
+    }
+
     ChatManager::sendServerMessage(sock, "/summonW: placed mob with type: " + std::to_string(type) +
         ", id: " + std::to_string(npc->appearanceData.iNPC_ID));
-    TableData::RunningMobs[npc->appearanceData.iNPC_ID] = npc;
+    TableData::RunningMobs[npc->appearanceData.iNPC_ID] = npc; // only record the one in the template
 }
 
 void unsummonWCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
@@ -280,13 +293,25 @@ void toggleAiCommand(std::string full, std::vector<std::string>& args, CNSocket*
     for (auto& pair : MobManager::Mobs) {
         pair.second->state = MobState::RETREAT;
         pair.second->target = nullptr;
+        pair.second->nextMovement = getTime();
+
+        // mobs with static paths can chill where they are
+        if (pair.second->staticPath) {
+            pair.second->roamX = pair.second->appearanceData.iX;
+            pair.second->roamY = pair.second->appearanceData.iY;
+            pair.second->roamZ = pair.second->appearanceData.iZ;
+        } else {
+            pair.second->roamX = pair.second->spawnX;
+            pair.second->roamY = pair.second->spawnY;
+            pair.second->roamZ = pair.second->spawnZ;
+        }
     }
 }
 
 void npcRotateCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
     PlayerView& plrv = PlayerManager::players[sock];
     Player* plr = plrv.plr;
-    
+
     BaseNPC* npc = NPCManager::getNearestNPC(plrv.currentChunks, plr->x, plr->y, plr->z);
 
     if (npc == nullptr) {
@@ -296,19 +321,118 @@ void npcRotateCommand(std::string full, std::vector<std::string>& args, CNSocket
 
     int angle = (plr->angle + 180) % 360;
     NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, npc->appearanceData.iX, npc->appearanceData.iY, npc->appearanceData.iZ, angle);
-    TableData::RunningNPCRotations[npc->appearanceData.iNPC_ID] = angle;
-    
+
+    // if it's a gruntwork NPC, rotate in-place
+    if (TableData::RunningMobs.find(npc->appearanceData.iNPC_ID) != TableData::RunningMobs.end()) {
+        NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, npc->appearanceData.iX, npc->appearanceData.iY, npc->appearanceData.iZ, angle);
+
+        ChatManager::sendServerMessage(sock, "[NPCR] Successfully set angle to " + std::to_string(angle) + " for gruntwork NPC "
+            + std::to_string(npc->appearanceData.iNPC_ID));
+    } else {
+        TableData::RunningNPCRotations[npc->appearanceData.iNPC_ID] = angle;
+
+        ChatManager::sendServerMessage(sock, "[NPCR] Successfully set angle to " + std::to_string(angle) + " for NPC "
+            + std::to_string(npc->appearanceData.iNPC_ID));
+    }
+
     // update rotation clientside
     INITSTRUCT(sP_FE2CL_NPC_ENTER, pkt);
     pkt.NPCAppearanceData = npc->appearanceData;
     sock->sendPacket((void*)&pkt, P_FE2CL_NPC_ENTER, sizeof(sP_FE2CL_NPC_ENTER));
-
-    ChatManager::sendServerMessage(sock, "[NPCR] Successfully set angle to " + std::to_string(angle) + " for NPC " + std::to_string(npc->appearanceData.iNPC_ID));
 }
 
 void refreshCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
     Player* plr = PlayerManager::getPlayer(sock);
     PlayerManager::sendPlayerTo(sock, plr->x, plr->y, plr->z);
+}
+
+void instanceCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
+
+    Player* plr = PlayerManager::getPlayer(sock);
+
+    // no additional arguments: report current instance ID
+    if (args.size() < 2) {
+        ChatManager::sendServerMessage(sock, "[INST] Current instance ID: " + std::to_string(plr->instanceID));
+        ChatManager::sendServerMessage(sock, "[INST] (Map " + std::to_string(MAPNUM(plr->instanceID)) + ", instance " + std::to_string(PLAYERID(plr->instanceID)) + ")");
+        return;
+    }
+
+    // move player to specified instance
+    // validate instance ID
+    char* instanceS;
+    int instance = std::strtol(args[1].c_str(), &instanceS, 10);
+    if (*instanceS) {
+        ChatManager::sendServerMessage(sock, "[INST] Invalid instance ID: " + args[1]);
+        return;
+    }
+
+    PlayerManager::sendPlayerTo(sock, plr->x, plr->y, plr->z, instance);
+    ChatManager::sendServerMessage(sock, "[INST] Switched to instance with ID " + std::to_string(instance));
+}
+
+void npcInstanceCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
+    PlayerView& plrv = PlayerManager::players[sock];
+    Player* plr = plrv.plr;
+
+    if (args.size() < 2) {
+        ChatManager::sendServerMessage(sock, "[NPCI] Instance ID must be specified");
+        ChatManager::sendServerMessage(sock, "[NPCI] Usage: /npci <instance ID>");
+        return;
+    }
+
+    BaseNPC* npc = NPCManager::getNearestNPC(plrv.currentChunks, plr->x, plr->y, plr->z);
+
+    if (npc == nullptr) {
+        ChatManager::sendServerMessage(sock, "[NPCI] No NPCs found nearby");
+        return;
+    }
+
+    // validate instance ID
+    char* instanceS;
+    int instance = std::strtol(args[1].c_str(), &instanceS, 10);
+    if (*instanceS) {
+        ChatManager::sendServerMessage(sock, "[NPCI] Invalid instance ID: " + args[1]);
+        return;
+    }
+
+    ChatManager::sendServerMessage(sock, "[NPCI] Moving NPC with ID " + std::to_string(npc->appearanceData.iNPC_ID) + " to instance " + std::to_string(instance));
+    TableData::RunningNPCMapNumbers[npc->appearanceData.iNPC_ID] = instance;
+    NPCManager::updateNPCInstance(npc->appearanceData.iNPC_ID, instance);
+}
+
+void minfoCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
+    Player* plr = PlayerManager::getPlayer(sock);
+    ChatManager::sendServerMessage(sock, "[MINFO] Current mission ID: " + std::to_string(plr->CurrentMissionID));
+
+    for (int i = 0; i < ACTIVE_MISSION_COUNT; i++) {
+        if (plr->tasks[i] != 0) {
+            TaskData& task = *MissionManager::Tasks[plr->tasks[i]];
+            if ((int)(task["m_iHMissionID"]) == plr->CurrentMissionID) {
+                ChatManager::sendServerMessage(sock, "[MINFO] Current task ID: " + std::to_string(plr->tasks[i]));
+                ChatManager::sendServerMessage(sock, "[MINFO] Current task type: " + std::to_string((int)(task["m_iHTaskType"])));
+                ChatManager::sendServerMessage(sock, "[MINFO] Current waypoint NPC ID: " + std::to_string((int)(task["m_iSTGrantWayPoint"])));
+
+                for (int j = 0; j < 3; j++)
+                    if ((int)(task["m_iCSUEnemyID"][j]) != 0)
+                        ChatManager::sendServerMessage(sock, "[MINFO] Current task mob #" + std::to_string(j+1) +": " + std::to_string((int)(task["m_iCSUEnemyID"][j])));
+
+                return;
+            }
+        }
+    }
+}
+
+void tasksCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
+
+    Player* plr = PlayerManager::getPlayer(sock);
+
+    for (int i = 0; i < ACTIVE_MISSION_COUNT; i++) {
+        if (plr->tasks[i] != 0) {
+            TaskData& task = *MissionManager::Tasks[plr->tasks[i]];
+            ChatManager::sendServerMessage(sock, "[TASK-" + std::to_string(i) + "] mission ID: " + std::to_string((int)(task["m_iHMissionID"])));
+            ChatManager::sendServerMessage(sock, "[TASK-" + std::to_string(i) + "] task ID: " + std::to_string(plr->tasks[i]));
+        }
+    }
 }
 
 void flushCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
@@ -321,18 +445,21 @@ void ChatManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_AVATAR_EMOTES_CHAT, emoteHandler);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_SEND_MENUCHAT_MESSAGE, menuChatHandler);
 
-    registerCommand("help", 100, helpCommand, "lists all unlocked commands");
-    registerCommand("test", 1, testCommand);
-    registerCommand("access", 100, accessCommand);
-    registerCommand("mss", 30, mssCommand);
-    registerCommand("npcr", 30, npcRotateCommand);
-    registerCommand("summonW", 30, summonWCommand);
-    registerCommand("unsummonW", 30, unsummonWCommand);
-    registerCommand("toggleai", 30, toggleAiCommand);
-    registerCommand("flush", 30, flushCommand);
-    registerCommand("level", 50, levelCommand);
-    registerCommand("population", 100, populationCommand);
-    registerCommand("refresh", 100, refreshCommand);
+    registerCommand("help", 100, helpCommand, "list all unlocked server-side commands");
+    registerCommand("access", 100, accessCommand, "print your access level");
+    registerCommand("instance", 30, instanceCommand, "print or change your current instance");
+    registerCommand("mss", 30, mssCommand, "edit Monkey Skyway routes");
+    registerCommand("npcr", 30, npcRotateCommand, "rotate NPCs");
+    registerCommand("npci", 30, npcInstanceCommand, "move NPCs across instances");
+    registerCommand("summonW", 30, summonWCommand, "permanently summon NPCs");
+    registerCommand("unsummonW", 30, unsummonWCommand, "delete permanently summoned NPCs");
+    registerCommand("toggleai", 30, toggleAiCommand, "enable/disable mob AI");
+    registerCommand("flush", 30, flushCommand, "save gruntwork to file");
+    registerCommand("level", 50, levelCommand, "change your character's level");
+    registerCommand("population", 100, populationCommand, "check how many players are online");
+    registerCommand("refresh", 100, refreshCommand, "teleport yourself to your current location");
+    registerCommand("minfo", 30, minfoCommand, "show details of the current mission and task.");
+    registerCommand("tasks", 30, tasksCommand, "list all active missions and their respective task ids.");
 }
 
 void ChatManager::registerCommand(std::string cmd, int requiredLevel, CommandHandler handlr, std::string help) {

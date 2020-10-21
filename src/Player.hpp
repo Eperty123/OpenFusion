@@ -37,7 +37,9 @@ struct Player {
     int32_t iConditionBitFlag;
     int8_t iSpecialState;
 
-    int x, y, z, angle, instanceID;
+    int x, y, z, angle;
+    int lastX, lastY, lastZ, lastAngle;
+    uint64_t instanceID;
     sItemBase Equip[AEQUIP_COUNT];
     sItemBase Inven[AINVEN_COUNT];
     sItemBase Bank[ABANK_COUNT];

@@ -5,18 +5,22 @@
 #include "NanoManager.hpp"
 #include "Player.hpp"
 
-#include <string.h> // for memset() and memcmp()
+#include <string.h> // for memset()
 #include <assert.h>
 
 std::map<std::pair<int32_t, int32_t>, Item> ItemManager::ItemData;
 std::map<int32_t, std::vector<VendorListing>> ItemManager::VendorTables;
 std::map<int32_t, CrocPotEntry> ItemManager::CrocPotTable;
+std::map<int32_t, std::vector<int>> ItemManager::RarityRatios;
+std::map<int32_t, Crate> ItemManager::Crates;
+// pair Itemset, Rarity -> vector of pointers (map iterators) to records in ItemData
+std::map<std::pair<int32_t, int32_t>, std::vector<std::map<std::pair<int32_t, int32_t>, Item>::iterator>> ItemManager::CrateItems;
 
 void ItemManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_ITEM_MOVE, itemMoveHandler);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_ITEM_DELETE, itemDeleteHandler);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_GIVE_ITEM, itemGMGiveHandler);
-    //this one is for gumballs
+    // this one is for gumballs
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_ITEM_USE, itemUseHandler);
     // Bank
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_BANK_OPEN, itemBankOpenHandler);
@@ -139,8 +143,7 @@ void ItemManager::itemMoveHandler(CNSocket* sock, CNPacketData* data) {
         if (itemmove->eFrom == (int)SlotType::EQUIP) {
             equipChange.iEquipSlotNum = itemmove->iFromSlotNum;
             equipChange.EquipSlotItem = resp.ToSlotItem;
-        }
-        else {
+        } else {
             equipChange.iEquipSlotNum = itemmove->iToSlotNum;
             equipChange.EquipSlotItem = resp.FromSlotItem;
         }
@@ -211,6 +214,11 @@ void ItemManager::itemGMGiveHandler(CNSocket* sock, CNPacketData* data) {
 
         resp.eIL = itemreq->eIL;
         resp.iSlotNum = itemreq->iSlotNum;
+        if (itemreq->Item.iType == 10) {
+            // item is vehicle, set expiration date
+            // set time limit: current time + 7days
+            itemreq->Item.iTimeLimit = getTimestamp() + 604800;
+        }
         resp.Item = itemreq->Item;
 
         plr.plr->Inven[itemreq->iSlotNum] = itemreq->Item;
@@ -228,11 +236,11 @@ void ItemManager::itemUseHandler(CNSocket* sock, CNPacketData* data) {
     if (player == nullptr)
         return;
 
-    //gumball can only be used from inventory, so we ignore eIL
+    // gumball can only be used from inventory, so we ignore eIL
     sItemBase gumball = player->Inven[request->iSlotNum];
     sNano nano = player->Nanos[player->equippedNanos[request->iNanoSlot]];
 
-    //sanity check, check if gumball exists
+    // sanity check, check if gumball exists
     if (!(gumball.iOpt > 0 && gumball.iType == 7 && gumball.iID>=119 && gumball.iID<=121)) {
         std::cout << "[WARN] Gumball not found" << std::endl;
         INITSTRUCT(sP_FE2CL_REP_PC_ITEM_USE_FAIL, response);
@@ -240,7 +248,7 @@ void ItemManager::itemUseHandler(CNSocket* sock, CNPacketData* data) {
         return;
     }
 
-    //sanity check, check if gumball type matches nano style
+    // sanity check, check if gumball type matches nano style
     int nanoStyle = NanoManager::nanoStyle(nano.iID);
     if (!((gumball.iID == 119 && nanoStyle == 0) ||
         (  gumball.iID == 120 && nanoStyle == 1) ||
@@ -265,11 +273,11 @@ void ItemManager::itemUseHandler(CNSocket* sock, CNPacketData* data) {
    // response.iSkillID = ?
 
     sock->sendPacket((void*)&response, P_FE2CL_REP_PC_ITEM_USE_SUCC, sizeof(sP_FE2CL_REP_PC_ITEM_USE_SUCC));
-    //update inventory serverside
+    // update inventory serverside
     player->Inven[response.iSlotNum] = response.RemainItem;
 
-    //this is a temporary way of calling buff efect
-    //TODO: send buff data via response packet
+    // this is a temporary way of calling buff efect
+    // TODO: send buff data via response packet
     int value1 = CSB_BIT_STIMPAKSLOT1 << request->iNanoSlot;
     int value2 = ECSB_STIMPAKSLOT1 + request->iNanoSlot;
 
@@ -796,8 +804,12 @@ void ItemManager::chestOpenHandler(CNSocket *sock, CNPacketData *data) {
     if (data->size != sizeof(sP_CL2FE_REQ_ITEM_CHEST_OPEN))
         return; // ignore the malformed packet
 
-    sP_CL2FE_REQ_ITEM_CHEST_OPEN *pkt = (sP_CL2FE_REQ_ITEM_CHEST_OPEN *)data->buf;
+    sP_CL2FE_REQ_ITEM_CHEST_OPEN *chest = (sP_CL2FE_REQ_ITEM_CHEST_OPEN *)data->buf;
     Player *plr = PlayerManager::getPlayer(sock);
+
+    // chest opening acknowledgement packet
+    INITSTRUCT(sP_FE2CL_REP_ITEM_CHEST_OPEN_SUCC, resp);
+    resp.iSlotNum = chest->iSlotNum;
 
     if (plr == nullptr)
         return;
@@ -821,26 +833,143 @@ void ItemManager::chestOpenHandler(CNSocket *sock, CNPacketData *data) {
     reward->iFatigue_Level = 1;
     reward->iItemCnt = 1; // remember to update resplen if you change this
 
+    item->iSlotNum = chest->iSlotNum;
+    item->eIL = chest->eIL;
+
     // item reward
-    item->sItem.iType = 0;
-    item->sItem.iID = 96;
-    item->sItem.iOpt = 1;
-    item->iSlotNum = pkt->iSlotNum;
-    item->eIL = pkt->eIL;
+    if (chest->ChestItem.iType != 9) {
+        std::cout << "[WARN] Player tried to open a crate with incorrect iType ?!" << std::endl;
+        return;
+    }
+
+    int itemSetId = -1, rarity = -1, ret = -1;
+    bool failing = false;
+
+    // find the crate
+    if (Crates.find(chest->ChestItem.iID) == Crates.end()) {
+        std::cout << "[WARN] Crate " << chest->ChestItem.iID << " not found!" << std::endl;
+        failing = true;
+    }
+    Crate& crate = Crates[chest->ChestItem.iID];
+
+    if (!failing)
+        itemSetId = getItemSetId(crate, chest->ChestItem.iID);
+    if (itemSetId == -1)
+        failing = true;
+
+    if (!failing)
+        rarity = getRarity(crate, itemSetId);
+    if (rarity == -1)
+        failing = true;
+
+    if (!failing)
+        ret = getCrateItem(item->sItem, itemSetId, rarity, plr->PCStyle.iGender);
+    if (ret == -1)
+        failing = true;
+
+    // if we failed to open a crate, at least give the player a gumball (suggested by Jade)
+    if (failing) {
+        item->sItem.iType = 7;
+        item->sItem.iID = 119 + (rand() % 3);
+        item->sItem.iOpt = 1;
+    }
 
     // update player
-    plr->Inven[pkt->iSlotNum] = item->sItem;
+    plr->Inven[chest->iSlotNum] = item->sItem;
 
     // transmit item
     sock->sendPacket((void*)respbuf, P_FE2CL_REP_REWARD_ITEM, resplen);
 
-    // chest opening acknowledgement packet
-    INITSTRUCT(sP_FE2CL_REP_ITEM_CHEST_OPEN_SUCC, resp);
-
-    resp.iSlotNum = pkt->iSlotNum;
-
+    // transmit chest opening acknowledgement packet
     std::cout << "opening chest..." << std::endl;
     sock->sendPacket((void*)&resp, P_FE2CL_REP_ITEM_CHEST_OPEN_SUCC, sizeof(sP_FE2CL_REP_ITEM_CHEST_OPEN_SUCC));
+}
+
+int ItemManager::getItemSetId(Crate& crate, int crateId) {
+    int itemSetsCount = crate.itemSets.size();
+    if (itemSetsCount == 0) {
+        std::cout << "[WARN] Crate " << crateId << " has no item sets assigned?!" << std::endl;
+        return -1;
+    }
+
+    // if crate points to multiple itemSets, choose a random one
+    int itemSetIndex = rand() % itemSetsCount;
+    return crate.itemSets[itemSetIndex];
+}
+
+int ItemManager::getRarity(Crate& crate, int itemSetId) {
+    // find rarity ratio
+    if (RarityRatios.find(crate.rarityRatioId) == RarityRatios.end()) {
+        std::cout << "[WARN] Rarity Ratio " << crate.rarityRatioId << " not found!" << std::endl;
+        return -1;
+    }
+
+    std::vector<int> rarityRatio = RarityRatios[crate.rarityRatioId];
+
+    /*
+     * First we have to check if specified item set contains items with all specified rarities,
+     * and if not eliminate them from the draw
+     * it is simpler to do here than to fix individually in the file
+     */
+
+    // remember that rarities start from 1!
+    for (int i = 0; i < rarityRatio.size(); i++){
+        if (CrateItems.find(std::make_pair(itemSetId, i+1)) == CrateItems.end())
+            rarityRatio[i] = 0;
+    }
+
+    int total = 0;
+    for (int value : rarityRatio)
+        total += value;
+
+    if (total == 0) {
+        std::cout << "Item Set " << itemSetId << " has no items assigned?!" << std::endl;
+        return -1;
+    }
+
+    // now return a random rarity number
+    int randomNum = rand() % total;
+    int rarity = 0;
+    int sum = 0;
+    do {
+        sum += rarityRatio[rarity];
+        rarity++;
+    } while (sum <= randomNum);
+
+    return rarity;
+}
+
+int ItemManager::getCrateItem(sItemBase& result, int itemSetId, int rarity, int playerGender) {
+    std::pair key = std::make_pair(itemSetId, rarity);
+
+    if (CrateItems.find(key) == CrateItems.end()) {
+        std::cout << "[WARN] Item Set ID " << itemSetId << " Rarity " << rarity << " items have not been found" << std::endl;
+        return -1;
+    }
+
+    // only take into account items that have correct gender
+    std::vector<std::map<std::pair<int32_t, int32_t>, Item>::iterator> items;
+    for (auto crateitem : CrateItems[key]) {
+        int gender = crateitem->second.gender;
+        // if gender is incorrect, exclude item
+        if (gender != 0 && gender != playerGender)
+            continue;
+        items.push_back(crateitem);
+    }
+
+    if (items.size() == 0) {
+        std::cout << "[WARN] Gender inequality! Set ID " << itemSetId << " Rarity " << rarity << " contains only "
+                  << (playerGender == 2 ? "boys" : "girls") << " items?!" << std::endl;
+        return -1;
+    }
+
+    auto item = items[rand() % items.size()];
+
+    result.iID = item->first.first;
+    result.iType = item->first.second;
+    result.iOpt = 1;
+
+    return 0;
 }
 
 // TODO: use this in cleaned up ItemManager
@@ -906,6 +1035,10 @@ void ItemManager::setItemStats(Player* plr) {
 
     for (int i = 0; i < 4; i++) {
         itemStatsDat = ItemManager::getItemData(plr->Equip[i].iID, plr->Equip[i].iType);
+        if (itemStatsDat == nullptr) {
+            std::cout << "[WARN] setItemStats(): getItemData() returned NULL" << std::endl;
+            continue;
+        }
         plr->pointDamage += itemStatsDat->pointDamage;
         plr->groupDamage += itemStatsDat->groupDamage;
         plr->defense += itemStatsDat->defense;

@@ -41,7 +41,6 @@ void startShard(CNShardServer* server) {
     server->start();
 }
 
-#ifndef _WIN32
 // terminate gracefully on SIGINT (for gprof)
 void terminate(int arg) {
     std::cout << "OpenFusion: terminating." << std::endl;
@@ -54,6 +53,7 @@ void terminate(int arg) {
     exit(0);
 }
 
+#ifndef _WIN32
 void initsignals() {
     struct sigaction act;
 
@@ -101,8 +101,18 @@ int main() {
     TransportManager::init();
     // BuddyManager::init(); // stubbed until we have database integration + lots of bug fixes
     GroupManager::init();
-
     Database::open();
+
+    switch (settings::EVENTMODE) {
+    case 0: break; // no event
+    case 1: std::cout << "[INFO] Event active. Hey, Hey It's Knishmas!" << std::endl; break;
+    case 2: std::cout << "[INFO] Event active. Wishing you a spook-tacular Halloween!" << std::endl; break;
+    case 3: std::cout << "[INFO] Event active. Have a very hoppy Easter!" << std::endl; break;
+    default:
+        std::cout << "[FATAL] Unknown event set in config file." << std::endl;
+        terminate(0);
+        /* not reached */
+    }
 
     std::cout << "[INFO] Starting Server Threads..." << std::endl;
     CNLoginServer loginServer(settings::LOGINPORT);

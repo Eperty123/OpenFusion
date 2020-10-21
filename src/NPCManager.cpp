@@ -2,6 +2,8 @@
 #include "ItemManager.hpp"
 #include "settings.hpp"
 #include "MobManager.hpp"
+#include "MissionManager.hpp"
+#include "ChunkManager.hpp"
 
 #include <cmath>
 #include <algorithm>
@@ -105,7 +107,7 @@ void NPCManager::addNPC(std::vector<Chunk*> viewableChunks, int32_t id) {
 void NPCManager::destroyNPC(int32_t id) {
     // sanity check
     if (NPCs.find(id) == NPCs.end()) {
-        std::cout << "npc not found : " << id << std::endl;
+        std::cout << "npc not found: " << id << std::endl;
         return;
     }
 
@@ -126,13 +128,11 @@ void NPCManager::destroyNPC(int32_t id) {
 
     // remove from mob manager
     if (MobManager::Mobs.find(id) != MobManager::Mobs.end())
-            MobManager::Mobs.erase(id);
+        MobManager::Mobs.erase(id);
 
     // finally, remove it from the map and free it
     NPCs.erase(id);
     delete entity;
-
-    std::cout << "npc removed!" << std::endl;
 }
 
 void NPCManager::updateNPCPosition(int32_t id, int X, int Y, int Z, int angle) {
@@ -146,7 +146,7 @@ void NPCManager::updateNPCPosition(int32_t id, int X, int Y, int Z) {
     npc->appearanceData.iX = X;
     npc->appearanceData.iY = Y;
     npc->appearanceData.iZ = Z;
-    std::tuple<int, int, int> newPos = ChunkManager::grabChunk(X, Y, npc->instanceID);
+    std::tuple<int, int, uint64_t> newPos = ChunkManager::grabChunk(X, Y, npc->instanceID);
 
     // nothing to be done (but we should also update currentChunks to add/remove stale chunks)
     if (newPos == npc->chunkPos) {
@@ -162,12 +162,25 @@ void NPCManager::updateNPCPosition(int32_t id, int X, int Y, int Z) {
     // send npc enter to new chunks
     addNPC(ChunkManager::getDeltaChunks(allChunks, npc->currentChunks), id);
 
-    // update chunks
-    ChunkManager::removeNPC(npc->chunkPos, id);
+    Chunk *chunk = nullptr;
+    if (ChunkManager::checkChunk(npc->chunkPos))
+        chunk = ChunkManager::chunks[npc->chunkPos];
+
+    if (ChunkManager::removeNPC(npc->chunkPos, id)) {
+        // if the old chunk was deallocated, remove it
+        allChunks.erase(std::remove(allChunks.begin(), allChunks.end(), chunk), allChunks.end());
+    }
+
     ChunkManager::addNPC(X, Y, npc->instanceID, id);
 
     npc->chunkPos = newPos;
     npc->currentChunks = allChunks;
+}
+
+void NPCManager::updateNPCInstance(int32_t npcID, uint64_t instanceID) {
+    BaseNPC* npc = NPCs[npcID];
+    npc->instanceID = instanceID;
+    updateNPCPosition(npcID, npc->appearanceData.iX, npc->appearanceData.iY, npc->appearanceData.iZ);
 }
 
 void NPCManager::sendToViewable(BaseNPC *npc, void *buf, uint32_t type, size_t size) {
@@ -273,8 +286,7 @@ void NPCManager::npcVendorSell(CNSocket* sock, CNPacketData* data) {
     if (plr->Inven[req->iInvenSlotNum].iOpt - req->iItemCnt > 0) { // selling part of a stack
         item->iOpt -= req->iItemCnt;
         original.iOpt = req->iItemCnt;
-    }
-    else { // selling entire slot
+    } else { // selling entire slot
         item->iID = 0;
         item->iOpt = 0;
         item->iType = 0;
@@ -363,7 +375,7 @@ void NPCManager::npcVendorTable(CNSocket* sock, CNPacketData* data) {
         vItem.item = base;
         vItem.iSortNum = listings[i].sort;
         vItem.iVendorID = req->iVendorID;
-        //vItem.fBuyCost = listings[i].price; this value is not actually the one that is used
+        //vItem.fBuyCost = listings[i].price; // this value is not actually the one that is used
 
         resp.item[i] = vItem;
     }
@@ -446,8 +458,7 @@ void NPCManager::npcCombineItems(CNSocket* sock, CNPacketData* data) {
     Item* itemLooksDat = ItemManager::getItemData(itemLooks->iID, itemLooks->iType);
 
     if (itemStatsDat == nullptr || itemLooksDat == nullptr
-        || ItemManager::CrocPotTable.find(abs(itemStatsDat->level - itemLooksDat->level)) == ItemManager::CrocPotTable.end()) // sanity check 2
-    {
+        || ItemManager::CrocPotTable.find(abs(itemStatsDat->level - itemLooksDat->level)) == ItemManager::CrocPotTable.end()) { // sanity check 2
         INITSTRUCT(sP_FE2CL_REP_PC_ITEM_COMBINATION_FAIL, failResp);
         failResp.iCostumeItemSlot = req->iCostumeItemSlot;
         failResp.iStatItemSlot = req->iStatItemSlot;
@@ -462,8 +473,7 @@ void NPCManager::npcCombineItems(CNSocket* sock, CNPacketData* data) {
     float successChance = recipe->base / 100.0f; // base success chance
 
     // rarity gap multiplier
-    switch(abs(itemStatsDat->rarity - itemLooksDat->rarity))
-    {
+    switch(abs(itemStatsDat->rarity - itemLooksDat->rarity)) {
     case 0:
         successChance *= recipe->rd0;
         break;
@@ -491,7 +501,7 @@ void NPCManager::npcCombineItems(CNSocket* sock, CNPacketData* data) {
         resp.iSuccessFlag = 1;
 
         // modify the looks item with the new stats and set the appearance through iOpt
-        itemLooks->iOpt = (int32_t)itemLooks->iID << 16;
+        itemLooks->iOpt = (int32_t)((itemLooks->iOpt) >> 16 > 0 ? (itemLooks->iOpt >> 16) : itemLooks->iID) << 16;
         itemLooks->iID = itemStats->iID;
 
         // delete stats item
@@ -499,8 +509,7 @@ void NPCManager::npcCombineItems(CNSocket* sock, CNPacketData* data) {
         itemStats->iOpt = 0;
         itemStats->iTimeLimit = 0;
         itemStats->iType = 0;
-    }
-    else {
+    } else {
         // failure; don't do anything?
         resp.iSuccessFlag = 0;
     }
@@ -535,21 +544,23 @@ void NPCManager::npcSummonHandler(CNSocket* sock, CNPacketData* data) {
     Player* plr = PlayerManager::getPlayer(sock);
 
     // permission & sanity check
-    if (plr == nullptr || plr->accountLevel > 30 || req->iNPCType >= 3314)
+    if (plr == nullptr || plr->accountLevel > 30 || req->iNPCType >= 3314 || req->iNPCCnt > 100)
         return;
 
     int team = NPCData[req->iNPCType]["m_iTeam"];
 
-    assert(nextId < INT32_MAX);
-    int id = nextId++;
+    for (int i = 0; i < req->iNPCCnt; i++) {
+        assert(nextId < INT32_MAX);
+        int id = nextId++;
 
-    if (team == 2) {
-        NPCs[id] = new Mob(plr->x, plr->y, plr->z, plr->instanceID, req->iNPCType, NPCData[req->iNPCType], id);
-        MobManager::Mobs[id] = (Mob*)NPCs[id];
-    } else
-        NPCs[id] = new BaseNPC(plr->x, plr->y, plr->z, plr->instanceID, req->iNPCType, id);
+        if (team == 2) {
+            NPCs[id] = new Mob(plr->x, plr->y, plr->z, plr->instanceID, req->iNPCType, NPCData[req->iNPCType], id);
+            MobManager::Mobs[id] = (Mob*)NPCs[id];
+        } else
+            NPCs[id] = new BaseNPC(plr->x, plr->y, plr->z, 0, plr->instanceID, req->iNPCType, id);
 
-    updateNPCPosition(id, plr->x, plr->y, plr->z);
+        updateNPCPosition(id, plr->x, plr->y, plr->z);
+    }
 }
 
 void NPCManager::npcWarpHandler(CNSocket* sock, CNPacketData* data) {
@@ -568,26 +579,49 @@ void NPCManager::npcWarpTimeMachine(CNSocket* sock, CNPacketData* data) {
 }
 
 void NPCManager::handleWarp(CNSocket* sock, int32_t warpId) {
+    PlayerView& plrv = PlayerManager::players[sock];
     // sanity check
     if (Warps.find(warpId) == Warps.end())
         return;
 
-    PlayerView& plrv = PlayerManager::players[sock];
+    MissionManager::failInstancedMissions(sock); // fail any missions that require the player's current instance
 
-    // send to client
-    INITSTRUCT(sP_FE2CL_REP_PC_WARP_USE_NPC_SUCC, resp);
-    resp.iX = Warps[warpId].x;
-    resp.iY = Warps[warpId].y;
-    resp.iZ = Warps[warpId].z;
-    resp.iCandy = plrv.plr->money;
-    resp.eIL = 4; // do not take away any items
+    uint64_t fromInstance = plrv.plr->instanceID; // saved for post-warp
 
-    // force player & NPC reload
-    PlayerManager::removePlayerFromChunks(plrv.currentChunks, sock);
-    plrv.currentChunks.clear();
-    plrv.chunkPos = std::make_tuple(0, 0, plrv.plr->instanceID);
+    if (plrv.plr->instanceID == 0) {
+        // save last uninstanced coords
+        plrv.plr->lastX = plrv.plr->x;
+        plrv.plr->lastY = plrv.plr->y;
+        plrv.plr->lastZ = plrv.plr->z;
+        plrv.plr->lastAngle = plrv.plr->angle;
+    }
 
-    sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_WARP_USE_NPC_SUCC, sizeof(sP_FE2CL_REP_PC_WARP_USE_NPC_SUCC));
+    // std::cerr << "Warped to Map Num:" << Warps[warpId].instanceID << " NPC ID " << Warps[warpId].npcID << std::endl;
+    if (Warps[warpId].isInstance) {
+        uint64_t instanceID = Warps[warpId].instanceID;
+
+        // if warp requires you to be on a mission, it's gotta be a unique instance
+        if (Warps[warpId].limitTaskID != 0 || instanceID == 14) { // 14 is a special case for the Time Lab
+            instanceID += ((uint64_t)plrv.plr->iIDGroup << 32); // upper 32 bits are leader ID
+            ChunkManager::createInstance(instanceID);
+        }
+
+        PlayerManager::sendPlayerTo(sock, Warps[warpId].x, Warps[warpId].y, Warps[warpId].z, instanceID);
+    } else {
+        INITSTRUCT(sP_FE2CL_REP_PC_WARP_USE_NPC_SUCC, resp); // Can only be used for exiting instances because it sets the instance flag to false
+        resp.iX = Warps[warpId].x;
+        resp.iY = Warps[warpId].y;
+        resp.iZ = Warps[warpId].z;
+        resp.iCandy = plrv.plr->money;
+        resp.eIL = 4; // do not take away any items
+        PlayerManager::removePlayerFromChunks(plrv.currentChunks, sock);
+        plrv.currentChunks.clear();
+        plrv.plr->instanceID = INSTANCE_OVERWORLD;
+        sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_WARP_USE_NPC_SUCC, sizeof(sP_FE2CL_REP_PC_WARP_USE_NPC_SUCC));
+    }
+
+    // post-warp: check if the source instance has no more players in it and delete it if so
+    ChunkManager::destroyInstanceIfEmpty(fromInstance);
 }
 
 /*

@@ -5,12 +5,17 @@
 #include "ItemManager.hpp"
 #include "MissionManager.hpp"
 #include "GroupManager.hpp"
+#include "TransportManager.hpp"
 
 #include <cmath>
+#include <limits.h>
 #include <assert.h>
 
 std::map<int32_t, Mob*> MobManager::Mobs;
 std::queue<int32_t> MobManager::RemovalQueue;
+
+std::map<int32_t, MobDropChance> MobManager::MobDropChances;
+std::map<int32_t, MobDrop> MobManager::MobDrops;
 
 bool MobManager::simulateMobs;
 
@@ -78,11 +83,11 @@ void MobManager::pcAttackNpcs(CNSocket *sock, CNPacketData *data) {
             damage.first = plr->groupDamage;
         else
             damage.first = plr->pointDamage;
-        
+
         int difficulty = (int)mob->data["m_iNpcLevel"];
-        
+
         damage = getDamage(damage.first, (int)mob->data["m_iProtection"], true, (plr->batteryW >= 11 + difficulty), NanoManager::nanoStyle(plr->activeNano), (int)mob->data["m_iNpcStyle"], difficulty);
-        
+
         if (plr->batteryW >= 11 + difficulty)
             plr->batteryW -= 11 + difficulty;
 
@@ -142,7 +147,7 @@ void MobManager::npcAttackPc(Mob *mob, time_t currTime) {
     }
 }
 
-void MobManager::giveReward(CNSocket *sock) {
+void MobManager::giveReward(CNSocket *sock, Mob* mob) {
     Player *plr = PlayerManager::getPlayer(sock);
 
     if (plr == nullptr)
@@ -159,9 +164,31 @@ void MobManager::giveReward(CNSocket *sock) {
     // don't forget to zero the buffer!
     memset(respbuf, 0, resplen);
 
-    // NOTE: these will need to be scaled according to the player/mob level difference
-    plr->money += (int)MissionManager::AvatarGrowth[plr->level]["m_iMobFM"]; // this one's innacurate, but close enough for now
-    MissionManager::updateFusionMatter(sock, MissionManager::AvatarGrowth[plr->level]["m_iMobFM"]);
+    // sanity check
+    if (MobDrops.find(mob->dropType) == MobDrops.end()) {
+        std::cout << "[WARN] Drop Type " << mob->dropType << " was not found" << std::endl;
+        return;
+    }
+    // find correct mob drop
+    MobDrop& drop = MobDrops[mob->dropType];
+
+    plr->money += drop.taros;
+    // formula for scaling FM with player/mob level difference
+    // TODO: adjust this better
+    int levelDifference = plr->level - mob->level;
+    int fm = drop.fm;
+    if (levelDifference > 0)
+        fm = levelDifference < 10 ? fm - (levelDifference * fm / 10) : 0;
+
+    MissionManager::updateFusionMatter(sock, fm);
+
+    // give boosts 1 in 3 times
+    if (drop.boosts > 0) {
+        if (rand() % 3 == 0)
+            plr->batteryN += drop.boosts;
+        if (rand() % 3 == 0)
+            plr->batteryW += drop.boosts;
+    }
 
     // simple rewards
     reward->m_iCandy = plr->money;
@@ -172,20 +199,27 @@ void MobManager::giveReward(CNSocket *sock) {
     reward->iFatigue_Level = 1;
     reward->iItemCnt = 1; // remember to update resplen if you change this
 
-#if 0
     int slot = ItemManager::findFreeSlot(plr);
-    if (slot == -1) {
-#else
-    int slot = -1;
-    if (true) {
-#endif
+
+    bool awardDrop = false;
+    MobDropChance *chance = nullptr;
+    // sanity check
+    if (MobDropChances.find(drop.dropChanceType) == MobDropChances.end()) {
+        std::cout << "[WARN] Unknown Drop Chance Type: " << drop.dropChanceType << std::endl;
+        return; // this also prevents holiday crate drops, but oh well
+    } else {
+        chance = &MobDropChances[drop.dropChanceType];
+        awardDrop = (rand() % 1000 < chance->dropChance);
+    }
+
+    // no drop
+    if (slot == -1 || !awardDrop) {
         // no room for an item, but you still get FM and taros
         reward->iItemCnt = 0;
         sock->sendPacket((void*)respbuf, P_FE2CL_REP_REWARD_ITEM, sizeof(sP_FE2CL_REP_REWARD_ITEM));
     } else {
         // item reward
-        item->sItem.iType = 9;
-        item->sItem.iID = 1;
+        getReward(&item->sItem, &drop, chance);
         item->iSlotNum = slot;
         item->eIL = 1; // Inventory Location. 1 means player inventory.
 
@@ -195,32 +229,114 @@ void MobManager::giveReward(CNSocket *sock) {
         sock->sendPacket((void*)respbuf, P_FE2CL_REP_REWARD_ITEM, resplen);
     }
 
+    // event crates
+    if (settings::EVENTMODE != 0)
+        giveEventReward(sock, plr);
+}
+
+void MobManager::getReward(sItemBase *reward, MobDrop* drop, MobDropChance* chance) {
+    reward->iType = 9;
+    reward->iOpt = 1;
+
+    int total = 0;
+    for (int ratio : chance->cratesRatio)
+        total += ratio;
+
+    // randomizing a crate
+    int randomNum = rand() % total;
+    int i = 0;
+    int sum = 0;
+    do {
+        reward->iID = drop->crateIDs[i];
+        sum += chance->cratesRatio[i];
+        i++;
+    }
+    while (sum<=randomNum);
+}
+
+void MobManager::giveEventReward(CNSocket* sock, Player* player) {
+    // random drop chance
+    if (rand() % 100 > settings::EVENTCRATECHANCE)
+        return;
+
+    // no slot = no reward
+    int slot = ItemManager::findFreeSlot(player);
+    if (slot == -1)
+        return;
+
+    const size_t resplen = sizeof(sP_FE2CL_REP_REWARD_ITEM) + sizeof(sItemReward);
+    assert(resplen < CN_PACKET_BUFFER_SIZE - 8);
+
+    uint8_t respbuf[resplen];
+    sP_FE2CL_REP_REWARD_ITEM* reward = (sP_FE2CL_REP_REWARD_ITEM*)respbuf;
+    sItemReward* item = (sItemReward*)(respbuf + sizeof(sP_FE2CL_REP_REWARD_ITEM));
+
+    // don't forget to zero the buffer!
+    memset(respbuf, 0, resplen);
+
+    // leave everything here as it is
+    reward->m_iCandy = player->money;
+    reward->m_iFusionMatter = player->fusionmatter;
+    reward->m_iBatteryN = player->batteryN;
+    reward->m_iBatteryW = player->batteryW;
+    reward->iFatigue = 100; // prevents warning message
+    reward->iFatigue_Level = 1;
+    reward->iItemCnt = 1; // remember to update resplen if you change this
+
+    // which crate to drop
+    int crateId;
+    switch (settings::EVENTMODE) {
+    // knishmas
+    case 1: crateId = 1187; break;
+    // halloween
+    case 2: crateId = 1181; break;
+    // spring
+    case 3: crateId = 1126; break;
+    // what
+    default:
+        std::cout << "[WARN] Unknown event Id " << settings::EVENTMODE << std::endl;
+        return;
+    }
+
+    item->sItem.iType = 9;
+    item->sItem.iID = crateId;
+    item->sItem.iOpt = 1;
+    item->iSlotNum = slot;
+    item->eIL = 1; // Inventory Location. 1 means player inventory.
+
+    // update player
+    player->Inven[slot] = item->sItem;
+    sock->sendPacket((void*)respbuf, P_FE2CL_REP_REWARD_ITEM, resplen);
 }
 
 int MobManager::hitMob(CNSocket *sock, Mob *mob, int damage) {
-        // cannot kill mobs multiple times; cannot harm retreating mobs
-        if (mob->state != MobState::ROAMING && mob->state != MobState::COMBAT) {
-            return 0; // no damage
-        }
+    // cannot kill mobs multiple times; cannot harm retreating mobs
+    if (mob->state != MobState::ROAMING && mob->state != MobState::COMBAT) {
+        return 0; // no damage
+    }
 
-        if (mob->state == MobState::ROAMING) {
-            assert(mob->target == nullptr);
-            mob->target = sock;
-            mob->state = MobState::COMBAT;
-            mob->nextMovement = getTime();
-            mob->nextAttack = 0;
-        }
+    if (mob->state == MobState::ROAMING) {
+        assert(mob->target == nullptr);
+        mob->target = sock;
+        mob->state = MobState::COMBAT;
+        mob->nextMovement = getTime();
+        mob->nextAttack = 0;
 
-        mob->appearanceData.iHP -= damage;
+        mob->roamX = mob->appearanceData.iX;
+        mob->roamY = mob->appearanceData.iY;
+        mob->roamZ = mob->appearanceData.iZ;
+    }
 
-        // wake up sleeping monster
-        // TODO: remove client-side bit somehow
-        mob->appearanceData.iConditionBitFlag &= ~CSB_BIT_MEZ;
+    mob->appearanceData.iHP -= damage;
 
-        if (mob->appearanceData.iHP <= 0)
-            killMob(mob->target, mob);
+    // wake up sleeping monster
+    // TODO: remove client-side bit somehow
+    mob->appearanceData.iConditionBitFlag &= ~CSB_BIT_MEZ;
 
-        return damage;
+    if (mob->appearanceData.iHP <= 0)
+        killMob(mob->target, mob);
+
+    return damage;
 }
 
 void MobManager::killMob(CNSocket *sock, Mob *mob) {
@@ -232,28 +348,50 @@ void MobManager::killMob(CNSocket *sock, Mob *mob) {
     // check for the edge case where hitting the mob did not aggro it
     if (sock != nullptr) {
         Player* plr = PlayerManager::getPlayer(sock);
-        
+
         if (plr == nullptr)
             return;
-        
-        if (plr->groupCnt == 1 && plr->iIDGroup == plr->iID) { 
-            giveReward(sock);
+
+        if (plr->groupCnt == 1 && plr->iIDGroup == plr->iID) {
+            giveReward(sock, mob);
             MissionManager::mobKilled(sock, mob->appearanceData.iNPCType);
         } else {
             plr = PlayerManager::getPlayerFromID(plr->iIDGroup);
 
             if (plr == nullptr)
                 return;
-            
+
             for (int i = 0; i < plr->groupCnt; i++) {
                 CNSocket* sockTo = PlayerManager::getSockFromID(plr->groupIDs[i]);
-                giveReward(sockTo);
+                giveReward(sockTo, mob);
                 MissionManager::mobKilled(sockTo, mob->appearanceData.iNPCType);
             }
         }
     }
 
+    // delay the despawn animation
     mob->despawned = false;
+
+    auto it = TransportManager::NPCQueues.find(mob->appearanceData.iNPC_ID);
+    if (it == TransportManager::NPCQueues.end() || it->second.empty())
+        return;
+
+    // rewind or empty the movement queue
+    if (mob->staticPath) {
+        /*
+         * This is inelegant, but we wind forward in the path until we find the point that
+         * corresponds with the Mob's spawn point.
+         *
+         * IMPORTANT: The check in TableData::loadPaths() must pass or else this will loop forever.
+         */
+        auto& queue = it->second;
+        for (auto point = queue.front(); point.x != mob->spawnX || point.y != mob->spawnY; point = queue.front()) {
+            queue.pop();
+            queue.push(point);
+        }
+    } else {
+        TransportManager::NPCQueues.erase(mob->appearanceData.iNPC_ID);
+    }
 }
 
 void MobManager::deadStep(Mob *mob, time_t currTime) {
@@ -282,6 +420,11 @@ void MobManager::deadStep(Mob *mob, time_t currTime) {
 
     mob->appearanceData.iHP = mob->maxHealth;
     mob->state = MobState::ROAMING;
+
+    // reset position
+    mob->appearanceData.iX = mob->spawnX;
+    mob->appearanceData.iY = mob->spawnY;
+    mob->appearanceData.iZ = mob->spawnZ;
 
     INITSTRUCT(sP_FE2CL_NPC_NEW, pkt);
 
@@ -359,19 +502,22 @@ void MobManager::combatStep(Mob *mob, time_t currTime) {
     }
 
     // retreat if the player leaves combat range
-    distance = hypot(plr->x - mob->spawnX, plr->y - mob->spawnY);
+    int xyDistance = hypot(plr->x - mob->roamX, plr->y - mob->roamY);
+    distance = hypot(xyDistance, plr->z - mob->roamZ);
     if (distance >= mob->data["m_iCombatRange"]) {
         mob->target = nullptr;
         mob->state = MobState::RETREAT;
     }
 }
 
-/*
- * TODO: precalculate a path, lerp through it, repeat.
- * The way it works right now, mobs only move around a little bit. This will result
- * in more natural movement, and will mesh well with pre-calculated paths (for Don Doom,
- * Bad Max, etc.) once those have been made.
- */
+void MobManager::incNextMovement(Mob *mob, time_t currTime) {
+    if (currTime == 0)
+        currTime = getTime();
+
+    int delay = (int)mob->data["m_iDelayTime"] * 1000;
+    mob->nextMovement = currTime + delay/2 + rand() % (delay/2);
+}
+
 void MobManager::roamingStep(Mob *mob, time_t currTime) {
     /*
      * We reuse nextAttack to avoid scanning for players all the time, but to still
@@ -387,36 +533,48 @@ void MobManager::roamingStep(Mob *mob, time_t currTime) {
     if (mob->idleRange == 0)
         return;
 
-    if (mob->nextMovement != 0 && currTime < mob->nextMovement)
+    // no random roaming if the mob already has a set path
+    if (mob->staticPath)
         return;
 
-    int delay = (int)mob->data["m_iDelayTime"] * 1000;
-    mob->nextMovement = currTime + delay/2 + rand() % (delay/2);
+    if (mob->nextMovement != 0 && currTime < mob->nextMovement)
+        return;
+    incNextMovement(mob, currTime);
+    /*
+     * mob->nextMovement is also updated whenever the path queue is traversed in
+     * TransportManager::stepNPCPathing() (which ticks at a higher frequency than nextMovement),
+     * so we don't have to check if there's already entries in the queue since we know there won't be.
+     */
 
-    INITSTRUCT(sP_FE2CL_NPC_MOVE, pkt);
     int xStart = mob->spawnX - mob->idleRange/2;
     int yStart = mob->spawnY - mob->idleRange/2;
-
-    int farX = xStart + rand() % mob->idleRange;
-    int farY = yStart + rand() % mob->idleRange;
     int speed = mob->data["m_iWalkSpeed"];
+
+    int farX, farY;
+    int distance; // for short walk detection
+
+    /*
+     * We don't want the mob to just take one step and stop, so we make sure
+     * it has walked a half-decent distance.
+     */
+    do {
+        farX = xStart + rand() % mob->idleRange;
+        farY = yStart + rand() % mob->idleRange;
+
+        distance = std::hypot(mob->appearanceData.iX - farX, mob->appearanceData.iY - farY);
+    } while (distance < 500);
 
     // halve movement speed if snared
     if (mob->appearanceData.iConditionBitFlag & CSB_BIT_DN_MOVE_SPEED)
         speed /= 2;
 
-    auto targ = lerp(mob->appearanceData.iX, mob->appearanceData.iY, farX, farY, speed);
+    std::queue<WarpLocation> queue;
+    WarpLocation from = { mob->appearanceData.iX, mob->appearanceData.iY, mob->appearanceData.iZ };
+    WarpLocation to = { farX, farY, mob->appearanceData.iZ };
 
-    NPCManager::updateNPCPosition(mob->appearanceData.iNPC_ID, targ.first, targ.second, mob->appearanceData.iZ);
-
-    pkt.iNPC_ID = mob->appearanceData.iNPC_ID;
-    pkt.iSpeed = speed;
-    pkt.iToX = mob->appearanceData.iX = targ.first;
-    pkt.iToY = mob->appearanceData.iY = targ.second;
-    pkt.iToZ = mob->appearanceData.iZ;
-
-    // notify all nearby players
-    NPCManager::sendToViewable(mob, &pkt, P_FE2CL_NPC_MOVE, sizeof(sP_FE2CL_NPC_MOVE));
+    // add a route to the queue; to be processed in TransportManager::stepNPCPathing()
+    TransportManager::lerp(&queue, from, to, speed);
+    TransportManager::NPCQueues[mob->appearanceData.iNPC_ID] = queue;
 }
 
 void MobManager::retreatStep(Mob *mob, time_t currTime) {
@@ -426,16 +584,16 @@ void MobManager::retreatStep(Mob *mob, time_t currTime) {
 
     mob->nextMovement = currTime + 500;
 
-    int distance = hypot(mob->appearanceData.iX - mob->spawnX, mob->appearanceData.iY - mob->spawnY);
+    int distance = hypot(mob->appearanceData.iX - mob->roamX, mob->appearanceData.iY - mob->roamY);
 
     //if (distance > mob->data["m_iIdleRange"]) {
     if (distance > 10) {
         INITSTRUCT(sP_FE2CL_NPC_MOVE, pkt);
 
-        auto targ = lerp(mob->appearanceData.iX, mob->appearanceData.iY, mob->spawnX, mob->spawnY, mob->data["m_iRunSpeed"]);
+        auto targ = lerp(mob->appearanceData.iX, mob->appearanceData.iY, mob->roamX, mob->roamY, (int)mob->data["m_iRunSpeed"] * 3);
 
         pkt.iNPC_ID = mob->appearanceData.iNPC_ID;
-        pkt.iSpeed = mob->data["m_iRunSpeed"];
+        pkt.iSpeed = (int)mob->data["m_iRunSpeed"] * 3;
         pkt.iToX = mob->appearanceData.iX = targ.first;
         pkt.iToY = mob->appearanceData.iY = targ.second;
         pkt.iToZ = mob->appearanceData.iZ;
@@ -574,9 +732,9 @@ void MobManager::dotDamageOnOff(CNSocket *sock, CNPacketData *data) {
 
     INITSTRUCT(sP_FE2CL_PC_BUFF_UPDATE, pkt1);
 
-    pkt1.eCSTB = ECSB_INFECTION; //eCharStatusTimeBuffID
-    pkt1.eTBU = 1; //eTimeBuffUpdate
-    pkt1.eTBT = 0; //eTimeBuffType 1 means nano
+    pkt1.eCSTB = ECSB_INFECTION; // eCharStatusTimeBuffID
+    pkt1.eTBU = 1; // eTimeBuffUpdate
+    pkt1.eTBT = 0; // eTimeBuffType 1 means nano
     pkt1.iConditionBitFlag = plr->iConditionBitFlag;
 
     sock->sendPacket((void*)&pkt1, P_FE2CL_PC_BUFF_UPDATE, sizeof(sP_FE2CL_PC_BUFF_UPDATE));
@@ -702,25 +860,30 @@ void MobManager::playerTick(CNServer *serv, time_t currTime) {
         lastHealTime = currTime;
 }
 
-std::pair<int,int> MobManager::getDamage(int attackPower, int defensePower, bool shouldCrit, bool batteryBoost, int attackerStyle, int defenderStyle, int difficulty) {
+std::pair<int,int> MobManager::getDamage(int attackPower, int defensePower, bool shouldCrit,
+                                         bool batteryBoost, int attackerStyle,
+                                         int defenderStyle, int difficulty) {
     std::pair<int,int> ret = {0, 1};
     if (attackPower + defensePower * 2 == 0)
         return ret;
 
+    // base calculation
     int damage = attackPower * attackPower / (attackPower + defensePower);
     damage = std::max(std::max(29, attackPower / 7), damage - defensePower * (12 + difficulty) / 65);
     damage = damage * (rand() % 40 + 80) / 100;
-    
+
+    // Adaptium/Blastons/Cosmix
     if (attackerStyle != -1 && defenderStyle != -1 && attackerStyle != defenderStyle) {
-        if (attackerStyle < defenderStyle || attackerStyle - defenderStyle == 2) 
+        if (attackerStyle < defenderStyle || attackerStyle - defenderStyle == 2)
             damage = damage * 5 / 4;
         else
             damage = damage * 4 / 5;
     }
-    
+
+    // weapon boosts
     if (batteryBoost)
         damage = damage * 5 / 4;
-    
+
     ret.first = damage;
     ret.second = 1;
 
@@ -786,9 +949,9 @@ void MobManager::pcAttackChars(CNSocket *sock, CNPacketData *data) {
                 damage.first = plr->groupDamage;
             else
                 damage.first = plr->pointDamage;
-        
+
             damage = getDamage(damage.first, target->defense, true, (plr->batteryW >= 12), -1, -1, 1);
-        
+
             if (plr->batteryW >= 12)
                 plr->batteryW -= 12;
 
@@ -813,11 +976,12 @@ void MobManager::pcAttackChars(CNSocket *sock, CNPacketData *data) {
                 damage.first = plr->groupDamage;
             else
                 damage.first = plr->pointDamage;
-            
+
             int difficulty = (int)mob->data["m_iNpcLevel"];
-            
-            damage = getDamage(damage.first, (int)mob->data["m_iProtection"], true, (plr->batteryW >= 11 + difficulty), NanoManager::nanoStyle(plr->activeNano), (int)mob->data["m_iNpcStyle"], difficulty);
-            
+
+            damage = getDamage(damage.first, (int)mob->data["m_iProtection"], true, (plr->batteryW >= 11 + difficulty),
+                NanoManager::nanoStyle(plr->activeNano), (int)mob->data["m_iNpcStyle"], difficulty);
+
             if (plr->batteryW >= 11 + difficulty)
                 plr->batteryW -= 11 + difficulty;
 
@@ -872,6 +1036,9 @@ void MobManager::resendMobHP(Mob *mob) {
  * as the mob, since it might be near a chunk boundary.
  */
 bool MobManager::aggroCheck(Mob *mob, time_t currTime) {
+    CNSocket *closest = nullptr;
+    int closestDistance = INT_MAX;
+
     for (Chunk *chunk : mob->currentChunks) {
         for (CNSocket *s : chunk->players) {
             Player *plr = s->plr;
@@ -879,7 +1046,7 @@ bool MobManager::aggroCheck(Mob *mob, time_t currTime) {
             if (plr->HP <= 0)
                 continue;
 
-            int mobRange = mob->data["m_iSightRange"];
+            int mobRange = mob->sightRange;
 
             if (plr->iConditionBitFlag & CSB_BIT_UP_STEALTH)
                 mobRange /= 3;
@@ -891,16 +1058,27 @@ bool MobManager::aggroCheck(Mob *mob, time_t currTime) {
             int xyDistance = hypot(mob->appearanceData.iX - plr->x, mob->appearanceData.iY - plr->y);
             int distance = hypot(xyDistance, mob->appearanceData.iZ - plr->z);
 
-            if (distance > mobRange)
+            if (distance > mobRange || distance > closestDistance)
                 continue;
 
-            // found player. engage.
-            mob->target = s;
-            mob->state = MobState::COMBAT;
-            mob->nextMovement = currTime;
-            mob->nextAttack = 0;
-            return true;
+            // found a player
+            closest = s;
+            closestDistance = distance;
         }
+    }
+
+    if (closest != nullptr) {
+        // found closest player. engage.
+        mob->target = closest;
+        mob->state = MobState::COMBAT;
+        mob->nextMovement = currTime;
+        mob->nextAttack = 0;
+
+        mob->roamX = mob->appearanceData.iX;
+        mob->roamY = mob->appearanceData.iY;
+        mob->roamZ = mob->appearanceData.iZ;
+
+        return true;
     }
 
     return false;
