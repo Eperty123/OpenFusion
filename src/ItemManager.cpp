@@ -140,12 +140,12 @@ void ItemManager::itemMoveHandler(CNSocket* sock, CNPacketData* data) {
         INITSTRUCT(sP_FE2CL_PC_EQUIP_CHANGE, equipChange);
 
         equipChange.iPC_ID = plr.plr->iID;
-        if (itemmove->eFrom == (int)SlotType::EQUIP) {
-            equipChange.iEquipSlotNum = itemmove->iFromSlotNum;
-            equipChange.EquipSlotItem = resp.ToSlotItem;
-        } else {
+        if (itemmove->eTo == (int)SlotType::EQUIP) {
             equipChange.iEquipSlotNum = itemmove->iToSlotNum;
             equipChange.EquipSlotItem = resp.FromSlotItem;
+        } else {
+            equipChange.iEquipSlotNum = itemmove->iFromSlotNum;
+            equipChange.EquipSlotItem = resp.ToSlotItem;
         }
 
         // unequip vehicle if equip slot 8 is 0
@@ -233,8 +233,8 @@ void ItemManager::itemUseHandler(CNSocket* sock, CNPacketData* data) {
     sP_CL2FE_REQ_ITEM_USE* request = (sP_CL2FE_REQ_ITEM_USE*)data->buf;
     Player* player = PlayerManager::getPlayer(sock);
 
-    if (player == nullptr)
-        return;
+    if (player == nullptr || request->iSlotNum < 0 || request->iSlotNum >= AINVEN_COUNT)
+        return; // sanity check
 
     // gumball can only be used from inventory, so we ignore eIL
     sItemBase gumball = player->Inven[request->iSlotNum];

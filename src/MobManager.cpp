@@ -85,11 +85,12 @@ void MobManager::pcAttackNpcs(CNSocket *sock, CNPacketData *data) {
             damage.first = plr->pointDamage;
 
         int difficulty = (int)mob->data["m_iNpcLevel"];
-
-        damage = getDamage(damage.first, (int)mob->data["m_iProtection"], true, (plr->batteryW >= 11 + difficulty), NanoManager::nanoStyle(plr->activeNano), (int)mob->data["m_iNpcStyle"], difficulty);
-
-        if (plr->batteryW >= 11 + difficulty)
-            plr->batteryW -= 11 + difficulty;
+        damage = getDamage(damage.first, (int)mob->data["m_iProtection"], true, (plr->batteryW > 6 + difficulty), NanoManager::nanoStyle(plr->activeNano), (int)mob->data["m_iNpcStyle"], difficulty);
+        
+        if (plr->batteryW >= 6 + difficulty)
+            plr->batteryW -= 6 + difficulty;
+        else
+            plr->batteryW = 0;
 
         damage.first = hitMob(sock, mob, damage.first);
 
@@ -126,7 +127,7 @@ void MobManager::npcAttackPc(Mob *mob, time_t currTime) {
     sP_FE2CL_NPC_ATTACK_PCs *pkt = (sP_FE2CL_NPC_ATTACK_PCs*)respbuf;
     sAttackResult *atk = (sAttackResult*)(respbuf + sizeof(sP_FE2CL_NPC_ATTACK_PCs));
 
-    auto damage = getDamage(475 + (int)mob->data["m_iPower"], plr->defense, false, false, -1, -1, 1);
+    auto damage = getDamage(450 + (int)mob->data["m_iPower"], plr->defense, false, false, -1, -1, rand() % plr->level + 1);
     plr->HP -= damage.first;
 
     pkt->iNPC_ID = mob->appearanceData.iNPC_ID;
@@ -330,8 +331,15 @@ int MobManager::hitMob(CNSocket *sock, Mob *mob, int damage) {
     mob->appearanceData.iHP -= damage;
 
     // wake up sleeping monster
-    // TODO: remove client-side bit somehow
-    mob->appearanceData.iConditionBitFlag &= ~CSB_BIT_MEZ;
+    if (mob->appearanceData.iConditionBitFlag & CSB_BIT_MEZ) {
+        mob->appearanceData.iConditionBitFlag &= ~CSB_BIT_MEZ;
+
+        INITSTRUCT(sP_FE2CL_CHAR_TIME_BUFF_TIME_OUT, pkt1);
+        pkt1.eCT = 2;
+        pkt1.iID = mob->appearanceData.iNPC_ID;
+        pkt1.iConditionBitFlag = mob->appearanceData.iConditionBitFlag;
+        NPCManager::sendToViewable(mob, &pkt1, P_FE2CL_CHAR_TIME_BUFF_TIME_OUT, sizeof(sP_FE2CL_CHAR_TIME_BUFF_TIME_OUT));
+    }
 
     if (mob->appearanceData.iHP <= 0)
         killMob(mob->target, mob);
@@ -467,7 +475,15 @@ void MobManager::combatStep(Mob *mob, time_t currTime) {
     if (distance <= (int)mob->data["m_iAtkRange"]) {
         // attack logic
         if (mob->nextAttack == 0) {
-            mob->nextAttack = currTime + (int)mob->data["m_iInitalTime"] * 100; // I *think* this is what this is
+            INITSTRUCT(sP_FE2CL_NPC_MOVE, pkt);
+            pkt.iNPC_ID = mob->appearanceData.iNPC_ID;
+            pkt.iSpeed = (int)mob->data["m_iRunSpeed"];
+            pkt.iToX = mob->appearanceData.iX;
+            pkt.iToY = mob->appearanceData.iY;
+            pkt.iToZ = mob->target->plr->z;
+            NPCManager::sendToViewable(mob, &pkt, P_FE2CL_NPC_MOVE, sizeof(sP_FE2CL_NPC_MOVE));
+
+            mob->nextAttack = currTime + (int)mob->data["m_iInitalTime"] * 100; //I *think* this is what this is
             npcAttackPc(mob, currTime);
         } else if (mob->nextAttack != 0 && currTime >= mob->nextAttack) {
             mob->nextAttack = currTime + (int)mob->data["m_iDelayTime"] * 100;
@@ -477,7 +493,9 @@ void MobManager::combatStep(Mob *mob, time_t currTime) {
         // movement logic
         if (mob->nextMovement != 0 && currTime < mob->nextMovement)
             return;
-        mob->nextMovement = currTime + 500;
+        mob->nextMovement = currTime + 400;
+        if (currTime >= mob->nextAttack)
+            mob->nextAttack = 0;
 
         int speed = mob->data["m_iRunSpeed"];
 
@@ -485,7 +503,7 @@ void MobManager::combatStep(Mob *mob, time_t currTime) {
         if (mob->appearanceData.iConditionBitFlag & CSB_BIT_DN_MOVE_SPEED)
             speed /= 2;
 
-        auto targ = lerp(mob->appearanceData.iX, mob->appearanceData.iY, mob->target->plr->x, mob->target->plr->y, speed);
+        auto targ = lerp(mob->appearanceData.iX, mob->appearanceData.iY, mob->target->plr->x, mob->target->plr->y,std::min(distance-(int)mob->data["m_iAtkRange"]+1, speed*2/5));
 
         NPCManager::updateNPCPosition(mob->appearanceData.iNPC_ID, targ.first, targ.second, mob->appearanceData.iZ);
 
@@ -495,7 +513,7 @@ void MobManager::combatStep(Mob *mob, time_t currTime) {
         pkt.iSpeed = speed;
         pkt.iToX = mob->appearanceData.iX = targ.first;
         pkt.iToY = mob->appearanceData.iY = targ.second;
-        pkt.iToZ = mob->appearanceData.iZ;
+        pkt.iToZ = mob->target->plr->z;
 
         // notify all nearby players
         NPCManager::sendToViewable(mob, &pkt, P_FE2CL_NPC_MOVE, sizeof(sP_FE2CL_NPC_MOVE));
@@ -581,7 +599,7 @@ void MobManager::retreatStep(Mob *mob, time_t currTime) {
     if (mob->nextMovement != 0 && currTime < mob->nextMovement)
         return;
 
-    mob->nextMovement = currTime + 500;
+    mob->nextMovement = currTime + 400;
 
     // distance between spawn point and current location
     int distance = hypot(mob->appearanceData.iX - mob->roamX, mob->appearanceData.iY - mob->roamY);
@@ -590,13 +608,13 @@ void MobManager::retreatStep(Mob *mob, time_t currTime) {
     if (distance > 10) {
         INITSTRUCT(sP_FE2CL_NPC_MOVE, pkt);
 
-        auto targ = lerp(mob->appearanceData.iX, mob->appearanceData.iY, mob->roamX, mob->roamY, (int)mob->data["m_iRunSpeed"] * 3);
+        auto targ = lerp(mob->appearanceData.iX, mob->appearanceData.iY, mob->roamX, mob->roamY, (int)mob->data["m_iRunSpeed"]*4/5);
 
         pkt.iNPC_ID = mob->appearanceData.iNPC_ID;
-        pkt.iSpeed = (int)mob->data["m_iRunSpeed"] * 3;
+        pkt.iSpeed = (int)mob->data["m_iRunSpeed"] * 2;
         pkt.iToX = mob->appearanceData.iX = targ.first;
         pkt.iToY = mob->appearanceData.iY = targ.second;
-        pkt.iToZ = mob->appearanceData.iZ;
+        pkt.iToZ = mob->appearanceData.iZ = mob->spawnZ;
 
         // notify all nearby players
         NPCManager::sendToViewable(mob, &pkt, P_FE2CL_NPC_MOVE, sizeof(sP_FE2CL_NPC_MOVE));
@@ -610,12 +628,15 @@ void MobManager::retreatStep(Mob *mob, time_t currTime) {
         mob->killedTime = 0;
         mob->nextAttack = 0;
         mob->appearanceData.iConditionBitFlag = 0;
-
-        resendMobHP(mob);
+        
+        // HACK: we haven't found a better way to refresh a mob's client-side status
+        drainMobHP(mob, 0);
     }
 }
 
 void MobManager::step(CNServer *serv, time_t currTime) {
+    static time_t lastDrainTime = 0;
+    
     for (auto& pair : Mobs) {
         int x = pair.second->appearanceData.iX;
         int y = pair.second->appearanceData.iY;
@@ -623,6 +644,30 @@ void MobManager::step(CNServer *serv, time_t currTime) {
         // skip chunks without players
         if (!ChunkManager::inPopulatedChunks(x, y, pair.second->instanceID))
             continue;
+
+        // drain
+        if (currTime - lastDrainTime >= 600 && pair.second->appearanceData.iConditionBitFlag & CSB_BIT_BOUNDINGBALL) {
+            drainMobHP(pair.second, pair.second->maxHealth * 3 / 50); // lose 10% every second
+        }
+
+        // unbuffing
+        std::unordered_map<int32_t, time_t>::iterator it = pair.second->unbuffTimes.begin();
+        while (it != pair.second->unbuffTimes.end()) {
+            
+            if (currTime >= it->second) {
+                pair.second->appearanceData.iConditionBitFlag &= ~it->first;
+                
+                INITSTRUCT(sP_FE2CL_CHAR_TIME_BUFF_TIME_OUT, pkt1);
+                pkt1.eCT = 2;
+                pkt1.iID = pair.second->appearanceData.iNPC_ID;
+                pkt1.iConditionBitFlag = pair.second->appearanceData.iConditionBitFlag;
+                NPCManager::sendToViewable(pair.second, &pkt1, P_FE2CL_CHAR_TIME_BUFF_TIME_OUT, sizeof(sP_FE2CL_CHAR_TIME_BUFF_TIME_OUT));
+                
+                it = pair.second->unbuffTimes.erase(it);
+            } else {
+                it++;
+            }
+        }
 
         // skip mob movement and combat if disabled
         if (!simulateMobs && pair.second->state != MobState::DEAD
@@ -652,6 +697,9 @@ void MobManager::step(CNServer *serv, time_t currTime) {
             break;
         }
     }
+    
+    if (currTime - lastDrainTime >= 600)
+        lastDrainTime = currTime;
 
     // deallocate all NPCs queued for removal
     while (RemovalQueue.size() > 0) {
@@ -666,8 +714,6 @@ void MobManager::step(CNServer *serv, time_t currTime) {
  */
 std::pair<int,int> MobManager::lerp(int x1, int y1, int x2, int y2, int speed) {
     std::pair<int,int> ret = {x1, y1};
-
-    speed /= 2;
 
     if (speed == 0)
         return ret;
@@ -714,8 +760,10 @@ void MobManager::combatBegin(CNSocket *sock, CNPacketData *data) {
 void MobManager::combatEnd(CNSocket *sock, CNPacketData *data) {
     Player *plr = PlayerManager::getPlayer(sock);
 
-    if (plr != nullptr)
+    if (plr != nullptr) {
         plr->inCombat = false;
+        plr->healCooldown = 4000;
+    }
 }
 
 void MobManager::dotDamageOnOff(CNSocket *sock, CNPacketData *data) {
@@ -810,11 +858,14 @@ void MobManager::playerTick(CNServer *serv, time_t currTime) {
             dealGooDamage(sock, PC_MAXHEALTH(plr->level) * 3 / 20);
 
         // heal
-        if (currTime - lastHealTime >= 6000 && !plr->inCombat && plr->HP < PC_MAXHEALTH(plr->level)) {
-            plr->HP += PC_MAXHEALTH(plr->level) / 5;
-            if (plr->HP > PC_MAXHEALTH(plr->level))
-                plr->HP = PC_MAXHEALTH(plr->level);
-            transmit = true;
+        if (currTime - lastHealTime >= 4000 && !plr->inCombat && plr->HP < PC_MAXHEALTH(plr->level)) {
+            if (currTime - lastHealTime - plr->healCooldown >= 4000) {
+                plr->HP += PC_MAXHEALTH(plr->level) / 5;
+                if (plr->HP > PC_MAXHEALTH(plr->level))
+                    plr->HP = PC_MAXHEALTH(plr->level);
+                transmit = true;
+            } else
+                plr->healCooldown -= 4000;
         }
 
         for (int i = 0; i < 3; i++) {
@@ -856,7 +907,7 @@ void MobManager::playerTick(CNServer *serv, time_t currTime) {
     }
 
     // if this was a heal tick, update the counter outside of the loop
-    if (currTime - lastHealTime >= 6000)
+    if (currTime - lastHealTime >= 4000)
         lastHealTime = currTime;
 }
 
@@ -869,15 +920,15 @@ std::pair<int,int> MobManager::getDamage(int attackPower, int defensePower, bool
 
     // base calculation
     int damage = attackPower * attackPower / (attackPower + defensePower);
-    damage = std::max(std::max(29, attackPower / 7), damage - defensePower * (12 + difficulty) / 65);
+    damage = std::max(10 + attackPower / 10, damage - defensePower * (4 + difficulty) / 40);
     damage = damage * (rand() % 40 + 80) / 100;
 
     // Adaptium/Blastons/Cosmix
     if (attackerStyle != -1 && defenderStyle != -1 && attackerStyle != defenderStyle) {
-        if (attackerStyle < defenderStyle || attackerStyle - defenderStyle == 2)
-            damage = damage * 5 / 4;
+        if (attackerStyle < defenderStyle || attackerStyle - defenderStyle == 2) 
+            damage = damage * 3 / 2;
         else
-            damage = damage * 4 / 5;
+            damage = damage * 2 / 3;
     }
 
     // weapon boosts
@@ -950,10 +1001,12 @@ void MobManager::pcAttackChars(CNSocket *sock, CNPacketData *data) {
             else
                 damage.first = plr->pointDamage;
 
-            damage = getDamage(damage.first, target->defense, true, (plr->batteryW >= 12), -1, -1, 1);
+            damage = getDamage(damage.first, target->defense, true, (plr->batteryW > 6 + plr->level), -1, -1, 1);
 
-            if (plr->batteryW >= 12)
-                plr->batteryW -= 12;
+            if (plr->batteryW >= 6 + plr->level)
+                plr->batteryW -= 6 + plr->level;
+            else
+                plr->batteryW = 0;
 
             target->HP -= damage.first;
 
@@ -979,11 +1032,13 @@ void MobManager::pcAttackChars(CNSocket *sock, CNPacketData *data) {
 
             int difficulty = (int)mob->data["m_iNpcLevel"];
 
-            damage = getDamage(damage.first, (int)mob->data["m_iProtection"], true, (plr->batteryW >= 11 + difficulty),
+            damage = getDamage(damage.first, (int)mob->data["m_iProtection"], true, (plr->batteryW > 6 + difficulty),
                 NanoManager::nanoStyle(plr->activeNano), (int)mob->data["m_iNpcStyle"], difficulty);
 
-            if (plr->batteryW >= 11 + difficulty)
-                plr->batteryW -= 11 + difficulty;
+            if (plr->batteryW >= 6 + difficulty)
+                plr->batteryW -= 6 + difficulty;
+            else
+                plr->batteryW = 0;
 
             damage.first = hitMob(sock, mob, damage.first);
 
@@ -1007,25 +1062,24 @@ void MobManager::pcAttackChars(CNSocket *sock, CNPacketData *data) {
     PlayerManager::sendToViewable(sock, (void*)respbuf, P_FE2CL_PC_ATTACK_CHARs, resplen);
 }
 
-// HACK: we haven't found a better way to refresh a mob's client-side status
-void MobManager::resendMobHP(Mob *mob) {
-    size_t resplen = sizeof(sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK) + sizeof(sSkillResult_Heal_HP);
+void MobManager::drainMobHP(Mob *mob, int amount) {
+    size_t resplen = sizeof(sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK) + sizeof(sSkillResult_Damage);
     assert(resplen < CN_PACKET_BUFFER_SIZE - 8);
     uint8_t respbuf[CN_PACKET_BUFFER_SIZE];
 
     memset(respbuf, 0, resplen);
 
     sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK *pkt = (sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK*)respbuf;
-    sSkillResult_Heal_HP *heal = (sSkillResult_Heal_HP*)(respbuf + sizeof(sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK));
+    sSkillResult_Damage *drain = (sSkillResult_Damage*)(respbuf + sizeof(sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK));
 
     pkt->iID = mob->appearanceData.iNPC_ID;
     pkt->eCT = 4; // mob
-    pkt->iTB_ID = ECSB_HEAL; // sSkillResult_Heal_HP
+    pkt->iTB_ID = ECSB_BOUNDINGBALL;
 
-    heal->eCT = 4;
-    heal->iID = mob->appearanceData.iNPC_ID;
-    heal->iHealHP = 0;
-    heal->iHP = mob->appearanceData.iHP;
+    drain->eCT = 4;
+    drain->iID = mob->appearanceData.iNPC_ID;
+    drain->iDamage = amount;
+    drain->iHP = mob->appearanceData.iHP -= amount;
 
     NPCManager::sendToViewable(mob, (void*)&respbuf, P_FE2CL_CHAR_TIME_BUFF_TIME_TICK, resplen);
 }

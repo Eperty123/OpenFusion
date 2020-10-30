@@ -11,18 +11,15 @@ Further documentation pending.
 
 tl;dr:
 
-1. Download the client+server bundle from [here](https://github.com/OpenFusionProject/OpenFusion/releases/download/1.1/OpenFusion.zip).
+1. Download the client+server bundle from [here](https://github.com/OpenFusionProject/OpenFusion/releases/download/1.2.1/OpenFusion.zip).
 2. Run `FreeClient/installUnity.bat` once
 
 From then on, any time you want to run the "game":
 
-3. Run `Server/winfusion.exe`
+3. Run `OpenFusion/winfusion.exe` (optional if you're using the public server)
 4. Run `FreeClient/OpenFusionClient.exe`
 
 Currently the client by default connects to a public server hosted by Cake. Change the loginInfo.php to point to your own server if you want to host your own.
-
-You have two randomized characters available to you on the Character Selection screen, one boy, one girl.
-You can also make your own character and play through the tutorial. The tutorial can be skipped by pressing the ~ key.
 
 If you want, [compiled binaries (artifacts) for each new commit can be found on AppVeyor.](https://ci.appveyor.com/project/OpenFusionProject/openfusion)
 

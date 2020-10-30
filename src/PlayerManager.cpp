@@ -222,9 +222,9 @@ void PlayerManager::updatePlayerChunk(CNSocket* sock, int X, int Y, uint64_t ins
     // now, add all the new npcs & players!
     addPlayerToChunks(ChunkManager::getDeltaChunks(allChunks, view.currentChunks), sock);
 
-    ChunkManager::addPlayer(X, Y, view.plr->instanceID, sock); // takes care of adding the player to the chunk if it exists or not
     view.chunkPos = newPos;
     view.currentChunks = allChunks;
+    ChunkManager::addPlayer(X, Y, view.plr->instanceID, sock); // takes care of adding the player to the chunk if it exists or not
 }
 
 void PlayerManager::sendPlayerTo(CNSocket* sock, int X, int Y, int Z, uint64_t I) {
@@ -241,7 +241,7 @@ void PlayerManager::sendPlayerTo(CNSocket* sock, int X, int Y, int Z, uint64_t I
 
     MissionManager::failInstancedMissions(sock); // fail any instanced missions
 
-    uint64_t fromInstance = plr->instanceID;
+    uint64_t fromInstance = plrv.plr->instanceID; // pre-warp instance, saved for post-warp
 
     plr->instanceID = I;
     if (I != INSTANCE_OVERWORLD) {
@@ -261,8 +261,10 @@ void PlayerManager::sendPlayerTo(CNSocket* sock, int X, int Y, int Z, uint64_t I
         PlayerManager::removePlayerFromChunks(plrv.currentChunks, sock);
         plrv.currentChunks.clear();
         sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_WARP_USE_NPC_SUCC, sizeof(sP_FE2CL_REP_PC_WARP_USE_NPC_SUCC));
+        updatePlayerPosition(sock, X, Y, Z);
     }
 
+    // post-warp: check if the source instance has no more players in it and delete it if so
     ChunkManager::destroyInstanceIfEmpty(fromInstance);
 }
 
