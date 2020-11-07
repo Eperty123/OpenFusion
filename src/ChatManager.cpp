@@ -436,6 +436,24 @@ void tasksCommand(std::string full, std::vector<std::string>& args, CNSocket* so
     }
 }
 
+void notifyCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
+    Player *plr = PlayerManager::getPlayer(sock);
+
+    if (plr->notify) {
+	    plr->notify = false;
+	    ChatManager::sendServerMessage(sock, "[ADMIN] No longer receiving join notifications");
+    } else {
+	    plr->notify = true;
+	    ChatManager::sendServerMessage(sock, "[ADMIN] Receiving join notifications");
+    }
+}
+
+void playersCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
+    ChatManager::sendServerMessage(sock, "[ADMIN] Players on the server:");
+    for (auto pair : PlayerManager::players)
+        ChatManager::sendServerMessage(sock, PlayerManager::getPlayerName(pair.second.plr));
+}
+
 void flushCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
     TableData::flush();
     ChatManager::sendServerMessage(sock, "Wrote gruntwork to " + settings::GRUNTWORKJSON);
@@ -461,6 +479,8 @@ void ChatManager::init() {
     registerCommand("refresh", 100, refreshCommand, "teleport yourself to your current location");
     registerCommand("minfo", 30, minfoCommand, "show details of the current mission and task.");
     registerCommand("tasks", 30, tasksCommand, "list all active missions and their respective task ids.");
+    registerCommand("notify", 30, notifyCommand, "receive a message whenever a player joins the server");
+    registerCommand("players", 30, playersCommand, "print all players on the server");
 }
 
 void ChatManager::registerCommand(std::string cmd, int requiredLevel, CommandHandler handlr, std::string help) {
@@ -474,7 +494,9 @@ void ChatManager::chatHandler(CNSocket* sock, CNPacketData* data) {
     sP_CL2FE_REQ_SEND_FREECHAT_MESSAGE* chat = (sP_CL2FE_REQ_SEND_FREECHAT_MESSAGE*)data->buf;
     Player* plr = PlayerManager::getPlayer(sock);
 
-    std::string fullChat = U16toU8(chat->szFreeChat);
+    std::string fullChat = sanitizeText(U16toU8(chat->szFreeChat));
+
+    std::cout << "[FreeChat] " << PlayerManager::getPlayerName(plr, false) << ": " << fullChat << std::endl;
 
     if (fullChat.length() > 1 && fullChat[0] == CMD_PREFIX) { // PREFIX
         runCmd(fullChat, sock);
@@ -483,9 +505,11 @@ void ChatManager::chatHandler(CNSocket* sock, CNPacketData* data) {
 
     // send to client
     INITSTRUCT(sP_FE2CL_REP_SEND_FREECHAT_MESSAGE_SUCC, resp);
-    memcpy(resp.szFreeChat, chat->szFreeChat, sizeof(chat->szFreeChat));
+
+    U8toU16(fullChat, (char16_t*)&resp.szFreeChat, sizeof(resp.szFreeChat));
     resp.iPC_ID = plr->iID;
     resp.iEmoteCode = chat->iEmoteCode;
+
     sock->sendPacket((void*)&resp, P_FE2CL_REP_SEND_FREECHAT_MESSAGE_SUCC, sizeof(sP_FE2CL_REP_SEND_FREECHAT_MESSAGE_SUCC));
 
     // send to visible players
@@ -495,13 +519,21 @@ void ChatManager::chatHandler(CNSocket* sock, CNPacketData* data) {
 void ChatManager::menuChatHandler(CNSocket* sock, CNPacketData* data) {
     if (data->size != sizeof(sP_CL2FE_REQ_SEND_MENUCHAT_MESSAGE))
         return; // malformed packet
+
     sP_CL2FE_REQ_SEND_MENUCHAT_MESSAGE* chat = (sP_CL2FE_REQ_SEND_MENUCHAT_MESSAGE*)data->buf;
+    Player *plr = PlayerManager::getPlayer(sock);
+
+    std::string fullChat = sanitizeText(U16toU8(chat->szFreeChat));
+
+    std::cout << "[MenuChat] " << PlayerManager::getPlayerName(plr, false) << ": " << fullChat << std::endl;
 
     // send to client
     INITSTRUCT(sP_FE2CL_REP_SEND_MENUCHAT_MESSAGE_SUCC, resp);
-    memcpy(resp.szFreeChat, chat->szFreeChat, sizeof(chat->szFreeChat));
+
+    U8toU16(fullChat, (char16_t*)&resp.szFreeChat, sizeof(resp.szFreeChat));
     resp.iPC_ID = PlayerManager::players[sock].plr->iID;
     resp.iEmoteCode = chat->iEmoteCode;
+
     sock->sendPacket((void*)&resp, P_FE2CL_REP_SEND_MENUCHAT_MESSAGE_SUCC, sizeof(sP_FE2CL_REP_SEND_MENUCHAT_MESSAGE_SUCC));
 
     // send to visible players
@@ -536,4 +568,21 @@ void ChatManager::sendServerMessage(CNSocket* sock, std::string msg) {
 
     // send the packet :)
     sock->sendPacket((void*)&motd, P_FE2CL_PC_MOTD_LOGIN, sizeof(sP_FE2CL_PC_MOTD_LOGIN));
+}
+
+// we only allow plain ascii, at least for now
+std::string ChatManager::sanitizeText(std::string text) {
+    int i;
+    char buf[128];
+
+    i = 0;
+    for (char c : text) {
+        if (i >= 127)
+            break;
+        if (c >= ' ' && c <= '~')
+            buf[i++] = c;
+    }
+    buf[i] = 0;
+
+    return std::string(buf);
 }
