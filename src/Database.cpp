@@ -500,7 +500,18 @@ Player Database::DbToPlayer(DbPlayer player) {
 }
 
 Database::DbPlayer Database::getDbPlayerById(int id) {
-    return db.get_all<DbPlayer>(where(c(&DbPlayer::PlayerID) == id)).front();
+    auto player = db.get_all<DbPlayer>(where(c(&DbPlayer::PlayerID) == id));
+    if (player.size() < 1) {
+        // garbage collection
+        db.remove_all<Inventory>(where(c(&Inventory::playerId) == id));
+        db.remove_all<Nano>(where(c(&Nano::playerId) == id));
+        db.remove_all<DbQuest>(where(c(&DbQuest::PlayerId) == id));
+        db.remove_all<Buddyship>(where(c(&Buddyship::PlayerAId) == id || c(&Buddyship::PlayerBId) == id));
+        db.remove_all<EmailData>(where(c(&EmailData::PlayerId) == id));
+        db.remove_all<EmailItem>(where(c(&EmailItem::PlayerId) == id));
+        return DbPlayer{ -1 };
+    }
+    return player.front();
 }
 
 Player Database::getPlayer(int id) {

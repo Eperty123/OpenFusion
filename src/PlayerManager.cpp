@@ -88,6 +88,16 @@ void PlayerManager::removePlayer(CNSocket* key) {
     // if the player was in a lair, clean it up
     ChunkManager::destroyInstanceIfEmpty(fromInstance);
 
+    // remove player's buffs from the server
+    auto it = NPCManager::EggBuffs.begin();
+    while (it != NPCManager::EggBuffs.end()) {
+        if (it->first.first == key) {
+            it = NPCManager::EggBuffs.erase(it);
+        }
+        else
+            it++;
+    }
+
     std::cout << players.size() << " players" << std::endl;
 }
 
@@ -106,6 +116,11 @@ bool PlayerManager::removePlayerFromChunks(std::vector<Chunk*> chunks, CNSocket*
                 exitBusData.eTT = 3;
                 exitBusData.iT_ID = id;
                 sock->sendPacket((void*)&exitBusData, P_FE2CL_TRANSPORTATION_EXIT, sizeof(sP_FE2CL_TRANSPORTATION_EXIT));
+                break;
+            case NPC_EGG:
+                INITSTRUCT(sP_FE2CL_SHINY_EXIT, exitEggData);
+                exitEggData.iShinyID = id;
+                sock->sendPacket((void*)&exitEggData, P_FE2CL_SHINY_EXIT, sizeof(sP_FE2CL_SHINY_EXIT));
                 break;
             default:
                 INITSTRUCT(sP_FE2CL_NPC_EXIT, exitData);
@@ -135,11 +150,20 @@ void PlayerManager::addPlayerToChunks(std::vector<Chunk*> chunks, CNSocket* sock
         // add npcs
         for (int32_t id : chunk->NPCs) {
             BaseNPC* npc = NPCManager::NPCs[id];
+
+            if (npc->appearanceData.iHP <= 0)
+                continue;
+
             switch (npc->npcClass) {
             case NPC_BUS:
                 INITSTRUCT(sP_FE2CL_TRANSPORTATION_ENTER, enterBusData);
                 enterBusData.AppearanceData = { 3, npc->appearanceData.iNPC_ID, npc->appearanceData.iNPCType, npc->appearanceData.iX, npc->appearanceData.iY, npc->appearanceData.iZ };
                 sock->sendPacket((void*)&enterBusData, P_FE2CL_TRANSPORTATION_ENTER, sizeof(sP_FE2CL_TRANSPORTATION_ENTER));
+                break;
+            case NPC_EGG:
+                INITSTRUCT(sP_FE2CL_SHINY_ENTER, enterEggData);
+                NPCManager::npcDataToEggData(&npc->appearanceData, &enterEggData.ShinyAppearanceData);
+                sock->sendPacket((void*)&enterEggData, P_FE2CL_SHINY_ENTER, sizeof(sP_FE2CL_SHINY_ENTER));
                 break;
             default:
                 INITSTRUCT(sP_FE2CL_NPC_ENTER, enterData);
