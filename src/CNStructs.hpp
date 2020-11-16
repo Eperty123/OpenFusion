@@ -32,6 +32,9 @@
 #define MAPNUM(x) ((x) & 0xffffffff)
 #define PLAYERID(x) ((x) >> 32)
 
+// typedef for chunk position tuple
+typedef std::tuple<int, int, uint64_t> ChunkPos;
+
 // TODO: rewrite U16toU8 & U8toU16 to not use codecvt
 
 std::string U16toU8(char16_t* src);

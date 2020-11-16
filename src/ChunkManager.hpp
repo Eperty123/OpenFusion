@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CNProtocol.hpp"
+#include "CNStructs.hpp"
 
 #include <utility>
 #include <vector>
@@ -24,20 +25,20 @@ namespace ChunkManager {
     void init();
     void cleanup();
 
-    extern std::map<std::tuple<int, int, uint64_t>, Chunk*> chunks;
+    extern std::map<ChunkPos, Chunk*> chunks;
 
-    void newChunk(std::tuple<int, int, uint64_t> pos);
-    void populateNewChunk(Chunk* chunk, std::tuple<int, int, uint64_t> pos);
+    void newChunk(ChunkPos pos);
+    void populateNewChunk(Chunk* chunk, ChunkPos pos);
     void addNPC(int posX, int posY, uint64_t instanceID, int32_t id);
     void addPlayer(int posX, int posY, uint64_t instanceID, CNSocket* sock);
-    bool removePlayer(std::tuple<int, int, uint64_t> chunkPos, CNSocket* sock);
-    bool removeNPC(std::tuple<int, int, uint64_t> chunkPos, int32_t id);
-    bool checkChunk(std::tuple<int, int, uint64_t> chunk);
-    void destroyChunk(std::tuple<int, int, uint64_t> chunkPos);
-    std::tuple<int, int, uint64_t> grabChunk(int posX, int posY, uint64_t instanceID);
-    std::vector<Chunk*> grabChunks(std::tuple<int, int, uint64_t> chunkPos);
+    bool removePlayer(ChunkPos chunkPos, CNSocket* sock);
+    bool removeNPC(ChunkPos chunkPos, int32_t id);
+    bool checkChunk(ChunkPos chunk);
+    void destroyChunk(ChunkPos chunkPos);
+    ChunkPos grabChunk(int posX, int posY, uint64_t instanceID);
+    std::vector<Chunk*> grabChunks(ChunkPos chunkPos);
     std::vector<Chunk*> getDeltaChunks(std::vector<Chunk*> from, std::vector<Chunk*> to);
-    std::vector<std::tuple<int, int, uint64_t>> getChunksInMap(uint64_t mapNum);
+    std::vector<ChunkPos> getChunksInMap(uint64_t mapNum);
     bool inPopulatedChunks(int posX, int posY, uint64_t instanceID);
 
     void createInstance(uint64_t);
