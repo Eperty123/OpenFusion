@@ -10,6 +10,7 @@
 #include "ChatManager.hpp"
 #include "Database.hpp"
 #include "BuddyManager.hpp"
+#include "MobManager.hpp"
 
 #include "settings.hpp"
 
@@ -68,6 +69,9 @@ void PlayerManager::removePlayer(CNSocket* key) {
     uint64_t fromInstance = view.plr->instanceID;
 
     GroupManager::groupKickPlayer(view.plr);
+
+    // remove player's bullets
+    MobManager::Bullets.erase(view.plr->iID);
 
     // save player to DB
     Database::updatePlayer(view.plr);
