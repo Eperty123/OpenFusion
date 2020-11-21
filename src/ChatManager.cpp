@@ -232,7 +232,7 @@ void summonWCommand(std::string full, std::vector<std::string>& args, CNSocket* 
     npc->appearanceData.iAngle = (plr->angle + 180) % 360;
     NPCManager::NPCs[npc->appearanceData.iNPC_ID] = npc;
 
-    NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, plr->x, plr->y, plr->z);
+    NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, plr->x, plr->y, plr->z, plr->instanceID, npc->appearanceData.iAngle);
 
     // if we're in a lair, we need to spawn the NPC in both the private instance and the template
     if (PLAYERID(plr->instanceID) != 0) {
@@ -251,7 +251,7 @@ void summonWCommand(std::string full, std::vector<std::string>& args, CNSocket* 
         npc->appearanceData.iAngle = (plr->angle + 180) % 360;
         NPCManager::NPCs[npc->appearanceData.iNPC_ID] = npc;
 
-        NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, plr->x, plr->y, plr->z);
+        NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, plr->x, plr->y, plr->z, npc->instanceID, npc->appearanceData.iAngle);
     }
 
     ChatManager::sendServerMessage(sock, "/summonW: placed mob with type: " + std::to_string(type) +
@@ -260,10 +260,10 @@ void summonWCommand(std::string full, std::vector<std::string>& args, CNSocket* 
 }
 
 void unsummonWCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
-    PlayerView& plrv = PlayerManager::players[sock];
-    Player* plr = plrv.plr;
+    Player* plr = PlayerManager::getPlayer(sock);
 
-    BaseNPC* npc = NPCManager::getNearestNPC(plrv.currentChunks, plr->x, plr->y, plr->z);
+    std::vector<Chunk*> chunks; // TODO
+    BaseNPC* npc = NPCManager::getNearestNPC(chunks, plr->x, plr->y, plr->z);
 
     if (npc == nullptr) {
         ChatManager::sendServerMessage(sock, "/unsummonW: No NPCs found nearby");
@@ -317,10 +317,10 @@ void toggleAiCommand(std::string full, std::vector<std::string>& args, CNSocket*
 }
 
 void npcRotateCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
-    PlayerView& plrv = PlayerManager::players[sock];
-    Player* plr = plrv.plr;
+    Player* plr = PlayerManager::getPlayer(sock);
 
-    BaseNPC* npc = NPCManager::getNearestNPC(plrv.currentChunks, plr->x, plr->y, plr->z);
+    std::vector<Chunk*> chunks; // TODO
+    BaseNPC* npc = NPCManager::getNearestNPC(chunks, plr->x, plr->y, plr->z);
 
     if (npc == nullptr) {
         ChatManager::sendServerMessage(sock, "[NPCR] No NPCs found nearby");
@@ -328,11 +328,11 @@ void npcRotateCommand(std::string full, std::vector<std::string>& args, CNSocket
     }
 
     int angle = (plr->angle + 180) % 360;
-    NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, npc->appearanceData.iX, npc->appearanceData.iY, npc->appearanceData.iZ, angle);
+    NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, npc->appearanceData.iX, npc->appearanceData.iY, npc->appearanceData.iZ, npc->instanceID, angle);
 
     // if it's a gruntwork NPC, rotate in-place
     if (TableData::RunningMobs.find(npc->appearanceData.iNPC_ID) != TableData::RunningMobs.end()) {
-        NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, npc->appearanceData.iX, npc->appearanceData.iY, npc->appearanceData.iZ, angle);
+        NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, npc->appearanceData.iX, npc->appearanceData.iY, npc->appearanceData.iZ, npc->instanceID, angle);
 
         ChatManager::sendServerMessage(sock, "[NPCR] Successfully set angle to " + std::to_string(angle) + " for gruntwork NPC "
             + std::to_string(npc->appearanceData.iNPC_ID));
@@ -379,8 +379,7 @@ void instanceCommand(std::string full, std::vector<std::string>& args, CNSocket*
 }
 
 void npcInstanceCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
-    PlayerView& plrv = PlayerManager::players[sock];
-    Player* plr = plrv.plr;
+    Player* plr = PlayerManager::getPlayer(sock);
 
     if (args.size() < 2) {
         ChatManager::sendServerMessage(sock, "[NPCI] Instance ID must be specified");
@@ -388,7 +387,8 @@ void npcInstanceCommand(std::string full, std::vector<std::string>& args, CNSock
         return;
     }
 
-    BaseNPC* npc = NPCManager::getNearestNPC(plrv.currentChunks, plr->x, plr->y, plr->z);
+    std::vector<Chunk*> chunks; // TODO
+    BaseNPC* npc = NPCManager::getNearestNPC(chunks, plr->x, plr->y, plr->z);
 
     if (npc == nullptr) {
         ChatManager::sendServerMessage(sock, "[NPCI] No NPCs found nearby");
@@ -405,7 +405,7 @@ void npcInstanceCommand(std::string full, std::vector<std::string>& args, CNSock
 
     ChatManager::sendServerMessage(sock, "[NPCI] Moving NPC with ID " + std::to_string(npc->appearanceData.iNPC_ID) + " to instance " + std::to_string(instance));
     TableData::RunningNPCMapNumbers[npc->appearanceData.iNPC_ID] = instance;
-    NPCManager::updateNPCInstance(npc->appearanceData.iNPC_ID, instance);
+    NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, npc->appearanceData.iX, npc->appearanceData.iY, npc->appearanceData.iZ, instance, npc->appearanceData.iAngle);
 }
 
 void minfoCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
@@ -495,7 +495,7 @@ void eggCommand(std::string full, std::vector<std::string>& args, CNSocket* sock
     Egg* egg = new Egg(plr->x + addX, plr->y + addY, plr->z, plr->instanceID, eggType, id, false); // change last arg to true after gruntwork
     NPCManager::NPCs[id] = egg;
     NPCManager::Eggs[id] = egg;
-    NPCManager::updateNPCPosition(id, plr->x + addX, plr->y + addY, plr->z, plr->instanceID);
+    NPCManager::updateNPCPosition(id, plr->x + addX, plr->y + addY, plr->z, plr->instanceID, plr->angle);
 
     // add to template
     TableData::RunningEggs[id] = egg;
@@ -516,7 +516,7 @@ void notifyCommand(std::string full, std::vector<std::string>& args, CNSocket* s
 void playersCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
     ChatManager::sendServerMessage(sock, "[ADMIN] Players on the server:");
     for (auto pair : PlayerManager::players)
-        ChatManager::sendServerMessage(sock, PlayerManager::getPlayerName(pair.second.plr));
+        ChatManager::sendServerMessage(sock, PlayerManager::getPlayerName(pair.second));
 }
 
 void flushCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
@@ -599,7 +599,7 @@ void ChatManager::menuChatHandler(CNSocket* sock, CNPacketData* data) {
     INITSTRUCT(sP_FE2CL_REP_SEND_MENUCHAT_MESSAGE_SUCC, resp);
 
     U8toU16(fullChat, (char16_t*)&resp.szFreeChat, sizeof(resp.szFreeChat));
-    resp.iPC_ID = PlayerManager::players[sock].plr->iID;
+    resp.iPC_ID = PlayerManager::getPlayer(sock)->iID;
     resp.iEmoteCode = chat->iEmoteCode;
 
     sock->sendPacket((void*)&resp, P_FE2CL_REP_SEND_MENUCHAT_MESSAGE_SUCC, sizeof(sP_FE2CL_REP_SEND_MENUCHAT_MESSAGE_SUCC));
@@ -641,7 +641,9 @@ void ChatManager::sendServerMessage(CNSocket* sock, std::string msg) {
 void ChatManager::announcementHandler(CNSocket* sock, CNPacketData* data) {
     if (data->size != sizeof(sP_CL2FE_GM_REQ_PC_ANNOUNCE))
         return; // ignore malformed packet
-    if (PlayerManager::getPlayer(sock)->accountLevel > 30)
+
+    Player* plr = PlayerManager::getPlayer(sock);
+    if (plr->accountLevel > 30)
         return; // only players with account level less than 30 (GM) are allowed to use this command
     sP_CL2FE_GM_REQ_PC_ANNOUNCE* announcement = (sP_CL2FE_GM_REQ_PC_ANNOUNCE*)data->buf;
 
@@ -649,18 +651,17 @@ void ChatManager::announcementHandler(CNSocket* sock, CNPacketData* data) {
     msg.iAnnounceType = announcement->iAnnounceType;
     msg.iDuringTime = announcement->iDuringTime;
     memcpy(msg.szAnnounceMsg, announcement->szAnnounceMsg, sizeof(msg.szAnnounceMsg));
-    std::map<CNSocket*, PlayerView>::iterator it;
+    std::map<CNSocket*, Player*>::iterator it;
 
     switch (announcement->iAreaType) {
-    case 0: // area
-        break; // stubbed for now
+    case 0: // area (all players in viewable chunks)
+        PlayerManager::sendToViewable(sock, (void*)&msg, P_FE2CL_GM_REP_PC_ANNOUNCE, sizeof(sP_FE2CL_GM_REP_PC_ANNOUNCE));
+        break;
     case 1: // shard
         break; //stubbed for now
     case 2: // world
         break; // stubbed for now
-    case 3: // global
-
-        // send announced messqage to ALL players
+    case 3: // global (all players)
         for (it = PlayerManager::players.begin(); it != PlayerManager::players.end(); it++) {
             CNSocket* allSock = it->first;
             allSock->sendPacket((void*)&msg, P_FE2CL_GM_REP_PC_ANNOUNCE, sizeof(sP_FE2CL_GM_REP_PC_ANNOUNCE));

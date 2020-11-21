@@ -554,7 +554,7 @@ void MobManager::combatStep(Mob *mob, time_t currTime) {
 
         auto targ = lerp(mob->appearanceData.iX, mob->appearanceData.iY, mob->target->plr->x, mob->target->plr->y,std::min(distance-(int)mob->data["m_iAtkRange"]+1, speed*2/5));
 
-        NPCManager::updateNPCPosition(mob->appearanceData.iNPC_ID, targ.first, targ.second, mob->appearanceData.iZ);
+        NPCManager::updateNPCPosition(mob->appearanceData.iNPC_ID, targ.first, targ.second, mob->appearanceData.iZ, mob->instanceID, mob->appearanceData.iAngle);
 
         INITSTRUCT(sP_FE2CL_NPC_MOVE, pkt);
 
@@ -689,11 +689,9 @@ void MobManager::retreatStep(Mob *mob, time_t currTime) {
 
 void MobManager::step(CNServer *serv, time_t currTime) {
     for (auto& pair : Mobs) {
-        int x = pair.second->appearanceData.iX;
-        int y = pair.second->appearanceData.iY;
 
         // skip chunks without players
-        if (!ChunkManager::inPopulatedChunks(x, y, pair.second->instanceID))
+        if (!ChunkManager::inPopulatedChunks(pair.second->viewableChunks))
             continue;
 
         // skip mob movement and combat if disabled
@@ -861,7 +859,7 @@ void MobManager::playerTick(CNServer *serv, time_t currTime) {
 
     for (auto& pair : PlayerManager::players) {
         CNSocket *sock = pair.first;
-        Player *plr = pair.second.plr;
+        Player *plr = pair.second;
         bool transmit = false;
 
         // group ticks
@@ -1001,8 +999,8 @@ void MobManager::pcAttackChars(CNSocket *sock, CNPacketData *data) {
             Player *target = nullptr;
 
             for (auto& pair : PlayerManager::players) {
-                if (pair.second.plr->iID == pktdata[i*2]) {
-                    target = pair.second.plr;
+                if (pair.second->iID == pktdata[i*2]) {
+                    target = pair.second;
                     break;
                 }
             }
@@ -1115,7 +1113,8 @@ bool MobManager::aggroCheck(Mob *mob, time_t currTime) {
     CNSocket *closest = nullptr;
     int closestDistance = INT_MAX;
 
-    for (Chunk *chunk : mob->currentChunks) {
+    for (auto it = mob->viewableChunks->begin(); it != mob->viewableChunks->end(); it++) {
+        Chunk* chunk = *it;
         for (CNSocket *s : chunk->players) {
             Player *plr = s->plr;
 

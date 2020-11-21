@@ -54,90 +54,6 @@ void NPCManager::init() {
     REGISTER_SHARD_TIMER(eggStep, 1000);
 }
 
-void NPCManager::removeNPC(std::vector<Chunk*> viewableChunks, int32_t id) {
-    BaseNPC* npc = NPCs[id];
-
-    switch (npc->npcClass) {
-    case NPC_BUS:
-        INITSTRUCT(sP_FE2CL_TRANSPORTATION_EXIT, exitBusData);
-        exitBusData.eTT = 3;
-        exitBusData.iT_ID = id;
-
-        for (Chunk* chunk : viewableChunks) {
-            for (CNSocket* sock : chunk->players) {
-                // send to socket
-                sock->sendPacket((void*)&exitBusData, P_FE2CL_TRANSPORTATION_EXIT, sizeof(sP_FE2CL_TRANSPORTATION_EXIT));
-            }
-        }
-        break;
-    case NPC_EGG:
-        INITSTRUCT(sP_FE2CL_SHINY_EXIT, exitEggData);
-        exitEggData.iShinyID = id;
-
-        for (Chunk* chunk : viewableChunks) {
-            for (CNSocket* sock : chunk->players) {
-                // send to socket
-                sock->sendPacket((void*)&exitEggData, P_FE2CL_SHINY_EXIT, sizeof(sP_FE2CL_SHINY_EXIT));
-            }
-        }
-        break;
-    default:
-        // create struct
-        INITSTRUCT(sP_FE2CL_NPC_EXIT, exitData);
-        exitData.iNPC_ID = id;
-
-        // remove it from the clients
-        for (Chunk* chunk : viewableChunks) {
-            for (CNSocket* sock : chunk->players) {
-                // send to socket
-                sock->sendPacket((void*)&exitData, P_FE2CL_NPC_EXIT, sizeof(sP_FE2CL_NPC_EXIT));
-            }
-        }
-        break;
-    }
-}
-
-void NPCManager::addNPC(std::vector<Chunk*> viewableChunks, int32_t id) {
-    BaseNPC* npc = NPCs[id];
-
-    switch (npc->npcClass) {
-    case NPC_BUS:
-        INITSTRUCT(sP_FE2CL_TRANSPORTATION_ENTER, enterBusData);
-        enterBusData.AppearanceData = { 3, npc->appearanceData.iNPC_ID, npc->appearanceData.iNPCType, npc->appearanceData.iX, npc->appearanceData.iY, npc->appearanceData.iZ };
-
-        for (Chunk* chunk : viewableChunks) {
-            for (CNSocket* sock : chunk->players) {
-                // send to socket
-                sock->sendPacket((void*)&enterBusData, P_FE2CL_TRANSPORTATION_ENTER, sizeof(sP_FE2CL_TRANSPORTATION_ENTER));
-            }
-        }
-        break;
-    case NPC_EGG:
-        INITSTRUCT(sP_FE2CL_SHINY_ENTER, enterEggData);
-        npcDataToEggData(&npc->appearanceData, &enterEggData.ShinyAppearanceData);
-
-        for (Chunk* chunk : viewableChunks) {
-            for (CNSocket* sock : chunk->players) {
-                // send to socket
-                sock->sendPacket((void*)&enterEggData, P_FE2CL_SHINY_ENTER, sizeof(sP_FE2CL_SHINY_ENTER));
-            }
-        }
-        break;
-    default:
-        // create struct
-        INITSTRUCT(sP_FE2CL_NPC_ENTER, enterData);
-        enterData.NPCAppearanceData = npc->appearanceData;
-
-        for (Chunk* chunk : viewableChunks) {
-            for (CNSocket* sock : chunk->players) {
-                // send to socket
-                sock->sendPacket((void*)&enterData, P_FE2CL_NPC_ENTER, sizeof(sP_FE2CL_NPC_ENTER));
-            }
-        }
-        break;
-    }
-}
-
 void NPCManager::destroyNPC(int32_t id) {
     // sanity check
     if (NPCs.find(id) == NPCs.end()) {
@@ -148,17 +64,16 @@ void NPCManager::destroyNPC(int32_t id) {
     BaseNPC* entity = NPCs[id];
 
     // sanity check
-    if (ChunkManager::chunks.find(entity->chunkPos) == ChunkManager::chunks.end()) {
+    if (!ChunkManager::chunkExists(entity->chunkPos)) {
         std::cout << "chunk not found!" << std::endl;
         return;
     }
 
     // remove NPC from the chunk
-    Chunk* chunk = ChunkManager::chunks[entity->chunkPos];
-    chunk->NPCs.erase(id);
+    ChunkManager::untrackNPC(entity->chunkPos, id);
 
     // remove from viewable chunks
-    removeNPC(entity->currentChunks, id);
+    ChunkManager::removeNPCFromChunks(ChunkManager::getViewableChunks(entity->chunkPos), id);
 
     // remove from mob manager
     if (MobManager::Mobs.find(id) != MobManager::Mobs.end())
@@ -173,58 +88,23 @@ void NPCManager::destroyNPC(int32_t id) {
     delete entity;
 }
 
-void NPCManager::updateNPCPosition(int32_t id, int X, int Y, int Z, int angle) {
-    NPCs[id]->appearanceData.iAngle = angle;
-    updateNPCPosition(id, X, Y, Z);
-}
-
-void NPCManager::updateNPCPosition(int32_t id, int X, int Y, int Z) {
+void NPCManager::updateNPCPosition(int32_t id, int X, int Y, int Z, uint64_t I, int angle) {
     BaseNPC* npc = NPCs[id];
-
+    npc->appearanceData.iAngle = angle;
+    ChunkPos oldChunk = npc->chunkPos;
+    ChunkPos newChunk = ChunkManager::chunkPosAt(X, Y, I);
     npc->appearanceData.iX = X;
     npc->appearanceData.iY = Y;
     npc->appearanceData.iZ = Z;
-
-    ChunkPos newPos = ChunkManager::grabChunk(X, Y, npc->instanceID);
-
-    // nothing to be done (but we should also update currentChunks to add/remove stale chunks)
-    if (newPos == npc->chunkPos) {
-        npc->currentChunks = ChunkManager::grabChunks(newPos);
-        return;
-    }
-
-    ChunkManager::addNPC(X, Y, npc->instanceID, id);
-    std::vector<Chunk*> allChunks = ChunkManager::grabChunks(newPos);
-
-    // send npc exit to stale chunks
-    removeNPC(ChunkManager::getDeltaChunks(npc->currentChunks, allChunks), id);
-
-    // send npc enter to new chunks
-    addNPC(ChunkManager::getDeltaChunks(allChunks, npc->currentChunks), id);
-
-    Chunk *chunk = nullptr;
-    if (ChunkManager::checkChunk(npc->chunkPos))
-        chunk = ChunkManager::chunks[npc->chunkPos];
-
-    if (ChunkManager::removeNPC(npc->chunkPos, id)) {
-        // if the old chunk was deallocated, remove it
-        allChunks.erase(std::remove(allChunks.begin(), allChunks.end(), chunk), allChunks.end());
-    }
-
-    
-
-    npc->chunkPos = newPos;
-    npc->currentChunks = allChunks;
-}
-
-void NPCManager::updateNPCInstance(int32_t npcID, uint64_t instanceID) {
-    BaseNPC* npc = NPCs[npcID];
-    npc->instanceID = instanceID;
-    updateNPCPosition(npcID, npc->appearanceData.iX, npc->appearanceData.iY, npc->appearanceData.iZ);
+    npc->instanceID = I;
+    if (oldChunk == newChunk)
+        return; // didn't change chunks
+    ChunkManager::updateNPCChunk(id, oldChunk, newChunk);
 }
 
 void NPCManager::sendToViewable(BaseNPC *npc, void *buf, uint32_t type, size_t size) {
-    for (Chunk *chunk : npc->currentChunks) {
+    for (auto it = npc->viewableChunks->begin(); it != npc->viewableChunks->end(); it++) {
+        Chunk* chunk = *it;
         for (CNSocket *s : chunk->players) {
             s->sendPacket(buf, type, size);
         }
@@ -602,7 +482,7 @@ void NPCManager::npcSummonHandler(CNSocket* sock, CNPacketData* data) {
         } else
             NPCs[id] = new BaseNPC(plr->x, plr->y, plr->z, 0, plr->instanceID, req->iNPCType, id);
 
-        updateNPCPosition(id, plr->x, plr->y, plr->z);
+        updateNPCPosition(id, plr->x, plr->y, plr->z, plr->instanceID, 0);
     }
 }
 
@@ -622,7 +502,7 @@ void NPCManager::npcWarpTimeMachine(CNSocket* sock, CNPacketData* data) {
 }
 
 void NPCManager::handleWarp(CNSocket* sock, int32_t warpId) {
-    PlayerView& plrv = PlayerManager::players[sock];
+    Player* plr = PlayerManager::getPlayer(sock);
     // sanity check
     if (Warps.find(warpId) == Warps.end())
         return;
@@ -633,14 +513,14 @@ void NPCManager::handleWarp(CNSocket* sock, int32_t warpId) {
 
         // if warp requires you to be on a mission, it's gotta be a unique instance
         if (Warps[warpId].limitTaskID != 0 || instanceID == 14) { // 14 is a special case for the Time Lab
-            instanceID += ((uint64_t)plrv.plr->iIDGroup << 32); // upper 32 bits are leader ID
+            instanceID += ((uint64_t)plr->iIDGroup << 32); // upper 32 bits are leader ID
             ChunkManager::createInstance(instanceID);
         }
 
-        if (plrv.plr->iID == plrv.plr->iIDGroup && plrv.plr->groupCnt == 1)
+        if (plr->iID == plr->iIDGroup && plr->groupCnt == 1)
             PlayerManager::sendPlayerTo(sock, Warps[warpId].x, Warps[warpId].y, Warps[warpId].z, instanceID);
         else {
-            Player* leaderPlr = PlayerManager::getPlayerFromID(plrv.plr->iIDGroup);
+            Player* leaderPlr = PlayerManager::getPlayerFromID(plr->iIDGroup);
 
             for (int i = 0; i < leaderPlr->groupCnt; i++) {
                 Player* otherPlr = PlayerManager::getPlayerFromID(leaderPlr->groupIDs[i]);
@@ -655,16 +535,15 @@ void NPCManager::handleWarp(CNSocket* sock, int32_t warpId) {
     }
     else
     {
-        INITSTRUCT(sP_FE2CL_REP_PC_WARP_USE_NPC_SUCC, resp); //Can only be used for exiting instances because it sets the instance flag to false
+        INITSTRUCT(sP_FE2CL_REP_PC_WARP_USE_NPC_SUCC, resp); // Can only be used for exiting instances because it sets the instance flag to false
         resp.iX = Warps[warpId].x;
         resp.iY = Warps[warpId].y;
         resp.iZ = Warps[warpId].z;
-        resp.iCandy = plrv.plr->money;
+        resp.iCandy = plr->money;
         resp.eIL = 4; // do not take away any items
-        PlayerManager::removePlayerFromChunks(plrv.currentChunks, sock);
-        plrv.currentChunks.clear();
-        plrv.plr->instanceID = INSTANCE_OVERWORLD;
+        plr->instanceID = INSTANCE_OVERWORLD;
         sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_WARP_USE_NPC_SUCC, sizeof(sP_FE2CL_REP_PC_WARP_USE_NPC_SUCC));
+        PlayerManager::updatePlayerPosition(sock, resp.iX, resp.iY, resp.iZ, INSTANCE_OVERWORLD, plr->angle);
     }
 }
 
@@ -837,14 +716,16 @@ void NPCManager::eggStep(CNServer* serv, time_t currTime) {
 
     // check dead eggs and eggs in inactive chunks
     for (auto egg : Eggs) {
-        if (!egg.second->dead || !ChunkManager::inPopulatedChunks(egg.second->appearanceData.iX, egg.second->appearanceData.iY, egg.second->instanceID))
+        if (!egg.second->dead || !ChunkManager::inPopulatedChunks(egg.second->viewableChunks))
             continue;
         if (egg.second->deadUntil <= timeStamp) {
             // respawn it
             egg.second->dead = false;
             egg.second->deadUntil = 0;
             egg.second->appearanceData.iHP = 400;
-            addNPC(egg.second->currentChunks, egg.first);
+            
+            ChunkManager::addNPCToChunks(ChunkManager::getViewableChunks(egg.second->chunkPos),
+                egg.first);
         }
     }
 
@@ -1012,7 +893,7 @@ void NPCManager::eggPickup(CNSocket* sock, CNPacketData* data) {
     if (egg->summoned)
         destroyNPC(eggId);
     else {
-        removeNPC(egg->currentChunks, eggId);
+        ChunkManager::removeNPCFromChunks(ChunkManager::getViewableChunks(egg->chunkPos), eggId);
         egg->dead = true;
         egg->deadUntil = getTime() + (time_t)type->regen * 1000;
         egg->appearanceData.iHP = 0;
