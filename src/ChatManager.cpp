@@ -7,6 +7,7 @@
 #include "NPCManager.hpp"
 #include "MobManager.hpp"
 #include "MissionManager.hpp"
+#include "ChunkManager.hpp"
 
 #include <sstream>
 #include <iterator>
@@ -48,7 +49,7 @@ void helpCommand(std::string full, std::vector<std::string>& args, CNSocket* soc
     Player *plr = PlayerManager::getPlayer(sock);
 
     for (auto& cmd : ChatManager::commands) {
-        if (cmd.second.requiredAccLevel >= plr->accountId)
+        if (cmd.second.requiredAccLevel >= plr->accountLevel)
             ChatManager::sendServerMessage(sock, "/" + cmd.first + (cmd.second.help.length() > 0 ? " - " + cmd.second.help : ""));
     }
 }
@@ -262,8 +263,7 @@ void summonWCommand(std::string full, std::vector<std::string>& args, CNSocket* 
 void unsummonWCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
     Player* plr = PlayerManager::getPlayer(sock);
 
-    std::vector<Chunk*> chunks; // TODO
-    BaseNPC* npc = NPCManager::getNearestNPC(chunks, plr->x, plr->y, plr->z);
+    BaseNPC* npc = NPCManager::getNearestNPC(plr->viewableChunks, plr->x, plr->y, plr->z);
 
     if (npc == nullptr) {
         ChatManager::sendServerMessage(sock, "/unsummonW: No NPCs found nearby");
@@ -278,8 +278,32 @@ void unsummonWCommand(std::string full, std::vector<std::string>& args, CNSocket
         return;
     }
 
-    if (TableData::RunningMobs.find(npc->appearanceData.iNPC_ID) == TableData::RunningMobs.end()) {
+    if (TableData::RunningMobs.find(npc->appearanceData.iNPC_ID) == TableData::RunningMobs.end()
+        && TableData::RunningGroups.find(npc->appearanceData.iNPC_ID) == TableData::RunningGroups.end()) {
         ChatManager::sendServerMessage(sock, "/unsummonW: Closest NPC is not a gruntwork mob.");
+        return;
+    }
+
+    int leadId = ((Mob*)npc)->groupLeader;
+    if (leadId != 0) {
+        if (MobManager::Mobs.find(leadId) == MobManager::Mobs.end()) {
+            std::cout << "[WARN] unsummonW: leader not found!" << std::endl;
+        }
+        Mob* leadNpc = MobManager::Mobs[leadId];
+        for (int i = 0; i < 4; i++) {
+            if (leadNpc->groupMember[i] == 0)
+                break;
+
+            if (MobManager::Mobs.find(leadNpc->groupMember[i]) == MobManager::Mobs.end()) {
+                std::cout << "[WARN] unsommonW: leader can't find a group member!" << std::endl;
+                continue;
+            }
+
+            NPCManager::destroyNPC(leadNpc->groupMember[i]);
+        }
+        TableData::RunningGroups.erase(leadId);
+        NPCManager::destroyNPC(leadId);
+        ChatManager::sendServerMessage(sock, "/unsummonW: Mob group destroyed.");
         return;
     }
 
@@ -319,8 +343,7 @@ void toggleAiCommand(std::string full, std::vector<std::string>& args, CNSocket*
 void npcRotateCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
     Player* plr = PlayerManager::getPlayer(sock);
 
-    std::vector<Chunk*> chunks; // TODO
-    BaseNPC* npc = NPCManager::getNearestNPC(chunks, plr->x, plr->y, plr->z);
+    BaseNPC* npc = NPCManager::getNearestNPC(plr->viewableChunks, plr->x, plr->y, plr->z);
 
     if (npc == nullptr) {
         ChatManager::sendServerMessage(sock, "[NPCR] No NPCs found nearby");
@@ -351,7 +374,10 @@ void npcRotateCommand(std::string full, std::vector<std::string>& args, CNSocket
 
 void refreshCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
     Player* plr = PlayerManager::getPlayer(sock);
-    PlayerManager::sendPlayerTo(sock, plr->x, plr->y, plr->z);
+    ChunkPos currentChunk = plr->chunkPos;
+    ChunkPos nullChunk = std::make_tuple(0, 0, 0);
+    ChunkManager::updatePlayerChunk(sock, currentChunk, nullChunk);
+    ChunkManager::updatePlayerChunk(sock, nullChunk, currentChunk);
 }
 
 void instanceCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
@@ -387,8 +413,7 @@ void npcInstanceCommand(std::string full, std::vector<std::string>& args, CNSock
         return;
     }
 
-    std::vector<Chunk*> chunks; // TODO
-    BaseNPC* npc = NPCManager::getNearestNPC(chunks, plr->x, plr->y, plr->z);
+    BaseNPC* npc = NPCManager::getNearestNPC(plr->viewableChunks, plr->x, plr->y, plr->z);
 
     if (npc == nullptr) {
         ChatManager::sendServerMessage(sock, "[NPCI] No NPCs found nearby");
@@ -505,11 +530,11 @@ void notifyCommand(std::string full, std::vector<std::string>& args, CNSocket* s
     Player *plr = PlayerManager::getPlayer(sock);
 
     if (plr->notify) {
-	    plr->notify = false;
-	    ChatManager::sendServerMessage(sock, "[ADMIN] No longer receiving join notifications");
+        plr->notify = false;
+        ChatManager::sendServerMessage(sock, "[ADMIN] No longer receiving join notifications");
     } else {
-	    plr->notify = true;
-	    ChatManager::sendServerMessage(sock, "[ADMIN] Receiving join notifications");
+        plr->notify = true;
+        ChatManager::sendServerMessage(sock, "[ADMIN] Receiving join notifications");
     }
 }
 
@@ -519,9 +544,159 @@ void playersCommand(std::string full, std::vector<std::string>& args, CNSocket* 
         ChatManager::sendServerMessage(sock, PlayerManager::getPlayerName(pair.second));
 }
 
+void summonGroupCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
+    if (args.size() < 4) {
+        ChatManager::sendServerMessage(sock, "/summonGroup(W) <leadermob> <mob> <number> [distance]");
+        return;
+    }
+    Player* plr = PlayerManager::getPlayer(sock);
+
+    char *rest;
+    
+    bool wCommand = (args[0] == "/summonGroupW");
+    int type = std::strtol(args[1].c_str(), &rest, 10);
+    int type2 = std::strtol(args[2].c_str(), &rest, 10);
+    int count = std::strtol(args[3].c_str(), &rest, 10);
+    int distance = 150;
+    if (args.size() > 4)
+        distance = std::strtol(args[4].c_str(), &rest, 10);
+
+    if (*rest) {
+        ChatManager::sendServerMessage(sock, "Invalid NPC number: " + args[1]);
+        return;
+    }
+
+    // permission & sanity check
+    if (type >= 3314 || type2 >= 3314 || count > 5) {
+        ChatManager::sendServerMessage(sock, "Invalid parameters; double check types and count");
+        return;
+    }
+
+    Mob* leadNpc = nullptr;
+
+    for (int i = 0; i < count; i++) {
+        int team = NPCManager::NPCData[type]["m_iTeam"];
+        assert(NPCManager::nextId < INT32_MAX);
+
+#define EXTRA_HEIGHT 200
+        BaseNPC *npc = nullptr;
+        int id = NPCManager::nextId++;
+
+        int x = plr->x;
+        int y = plr->y;
+        int z = plr->z;
+        if (i > 0) {
+            int angle = 360.0f / (count-1) * (i-1);
+            if (count == 3)
+                angle = 90 + 60 * i;
+
+            angle += (plr->angle + 180) % 360;
+
+            x += -1.0f * sin(angle / 180.0f * M_PI) * distance;
+            y += -1.0f * cos(angle / 180.0f * M_PI) * distance;
+            z = plr->z;
+        }
+
+        if (team == 2) {
+            npc = new Mob(x, y, z + EXTRA_HEIGHT, plr->instanceID, type, NPCManager::NPCData[type], id);
+            MobManager::Mobs[npc->appearanceData.iNPC_ID] = (Mob*)npc;
+
+            if (i > 0) {
+                leadNpc->groupMember[i-1] = npc->appearanceData.iNPC_ID;
+                Mob* mob = MobManager::Mobs[npc->appearanceData.iNPC_ID];
+                mob->groupLeader = leadNpc->appearanceData.iNPC_ID;
+                mob->offsetX = x - plr->x;
+                mob->offsetY = y - plr->y;
+            }
+
+            // re-enable respawning
+            if (wCommand)
+                ((Mob*)npc)->summoned = false;
+        } else {
+            npc = new BaseNPC(x, y, z + EXTRA_HEIGHT, 0, plr->instanceID, type, id);
+        }
+
+        npc->appearanceData.iAngle = (plr->angle + 180) % 360;
+        NPCManager::NPCs[npc->appearanceData.iNPC_ID] = npc;
+
+        NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, x, y, z, plr->instanceID, npc->appearanceData.iAngle);
+
+        // if we're in a lair, we need to spawn the NPC in both the private instance and the template
+        if (PLAYERID(plr->instanceID) != 0) {
+            id = NPCManager::nextId++;
+
+            if (team == 2) {
+                npc = new Mob(x, y, z + EXTRA_HEIGHT, MAPNUM(plr->instanceID), type, NPCManager::NPCData[type], id);
+
+                MobManager::Mobs[npc->appearanceData.iNPC_ID] = (Mob*)npc;
+
+                if (i > 0) {
+                    leadNpc->groupMember[i-1] = npc->appearanceData.iNPC_ID;
+                    Mob* mob = MobManager::Mobs[npc->appearanceData.iNPC_ID];
+                    mob->groupLeader = leadNpc->appearanceData.iNPC_ID;
+                    mob->offsetX = x - plr->x;
+                    mob->offsetY = y - plr->y;
+                }
+                if (wCommand)
+                    ((Mob*)npc)->summoned = false;
+            } else {
+                npc = new BaseNPC(x, y, z + EXTRA_HEIGHT, 0, MAPNUM(plr->instanceID), type, id);
+            }
+
+            npc->appearanceData.iAngle = (plr->angle + 180) % 360;
+            NPCManager::NPCs[npc->appearanceData.iNPC_ID] = npc;
+
+            NPCManager::updateNPCPosition(npc->appearanceData.iNPC_ID, x, y, z, plr->instanceID, npc->appearanceData.iAngle);
+        }
+
+        ChatManager::sendServerMessage(sock, "/summonGroup(W): placed mob with type: " + std::to_string(type) +
+            ", id: " + std::to_string(npc->appearanceData.iNPC_ID));
+
+        if (i == 0 && team == 2) {
+            type = type2;
+            leadNpc = MobManager::Mobs[npc->appearanceData.iNPC_ID];
+            leadNpc->groupLeader = leadNpc->appearanceData.iNPC_ID;
+        }
+    }
+
+    if (!wCommand)
+        return; // not writing; don't add to running mobs
+
+    if (leadNpc == nullptr) {
+        std::cout << "/summonGroupW: can't find group leader! Won't be saved!\n";
+        return;
+    }
+
+    TableData::RunningGroups[leadNpc->appearanceData.iNPC_ID] = leadNpc; // only record the leader
+}
+
 void flushCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
     TableData::flush();
     ChatManager::sendServerMessage(sock, "Wrote gruntwork to " + settings::GRUNTWORKJSON);
+}
+
+void whoisCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
+    Player* plr = PlayerManager::getPlayer(sock);
+    BaseNPC* npc = NPCManager::getNearestNPC(plr->viewableChunks, plr->x, plr->y, plr->z);
+
+    if (npc == nullptr) {
+        ChatManager::sendServerMessage(sock, "[WHOIS] No NPCs found nearby");
+        return;
+    }
+
+    ChatManager::sendServerMessage(sock, "[WHOIS] ID: " + std::to_string(npc->appearanceData.iNPC_ID));
+    ChatManager::sendServerMessage(sock, "[WHOIS] Type: " + std::to_string(npc->appearanceData.iNPCType));
+    ChatManager::sendServerMessage(sock, "[WHOIS] HP: " + std::to_string(npc->appearanceData.iHP));
+    ChatManager::sendServerMessage(sock, "[WHOIS] CBF: " + std::to_string(npc->appearanceData.iConditionBitFlag));
+    ChatManager::sendServerMessage(sock, "[WHOIS] Class: " + std::to_string(npc->npcClass));
+    ChatManager::sendServerMessage(sock, "[WHOIS] X: " + std::to_string(npc->appearanceData.iX));
+    ChatManager::sendServerMessage(sock, "[WHOIS] Y: " + std::to_string(npc->appearanceData.iY));
+    ChatManager::sendServerMessage(sock, "[WHOIS] Z: " + std::to_string(npc->appearanceData.iZ));
+    ChatManager::sendServerMessage(sock, "[WHOIS] Angle: " + std::to_string(npc->appearanceData.iAngle));
+    std::string chunkPosition = std::to_string(std::get<0>(npc->chunkPos)) + ", " + std::to_string(std::get<1>(npc->chunkPos)) + ", " + std::to_string(std::get<2>(npc->chunkPos));
+    ChatManager::sendServerMessage(sock, "[WHOIS] Chunk: {" + chunkPosition + "}");
+    ChatManager::sendServerMessage(sock, "[WHOIS] MapNum: " + std::to_string(MAPNUM(npc->instanceID)));
+    ChatManager::sendServerMessage(sock, "[WHOIS] Instance: " + std::to_string(PLAYERID(npc->instanceID)));
 }
 
 void ChatManager::init() {
@@ -549,6 +724,9 @@ void ChatManager::init() {
     registerCommand("tasks", 30, tasksCommand, "list all active missions and their respective task ids.");
     registerCommand("notify", 30, notifyCommand, "receive a message whenever a player joins the server");
     registerCommand("players", 30, playersCommand, "print all players on the server");
+    registerCommand("summonGroup", 30, summonGroupCommand, "summon group NPCs");
+    registerCommand("summonGroupW", 30, summonGroupCommand, "permanently summon group NPCs");
+    registerCommand("whois", 50, whoisCommand, "describe nearest NPC");
 }
 
 void ChatManager::registerCommand(std::string cmd, int requiredLevel, CommandHandler handlr, std::string help) {

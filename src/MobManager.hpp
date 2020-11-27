@@ -51,6 +51,11 @@ struct Mob : public BaseNPC {
     // drop
     int dropType;
 
+    // group
+    int groupLeader = 0;
+    int offsetX, offsetY;
+    int groupMember[4] = {0, 0, 0, 0};
+
     // temporary; until we're sure what's what
     nlohmann::json data;
 
@@ -70,6 +75,9 @@ struct Mob : public BaseNPC {
         roamX = spawnX = appearanceData.iX;
         roamY = spawnY = appearanceData.iY;
         roamZ = spawnZ = appearanceData.iZ;
+
+        offsetX = 0;
+        offsetY = 0;
 
         appearanceData.iConditionBitFlag = 0;
 
@@ -157,5 +165,7 @@ namespace MobManager {
     void projectileHit(CNSocket* sock, CNPacketData* data);
     /// returns bullet id
     int8_t addBullet(Player* plr, bool isGrenade);
+
+    void followToCombat(Mob *mob);
 
 }

@@ -172,6 +172,7 @@ void ChunkManager::addPlayerToChunks(std::set<Chunk*> chnks, CNSocket* sock) {
         // add npcs
         for (int32_t id : chunk->NPCs) {
             BaseNPC* npc = NPCManager::NPCs[id];
+            npc->playersInView++;
 
             if (npc->appearanceData.iHP <= 0)
                 continue;
@@ -248,6 +249,7 @@ void ChunkManager::addNPCToChunks(std::set<Chunk*> chnks, int32_t id) {
             for (CNSocket* sock : chunk->players) {
                 // send to socket
                 sock->sendPacket((void*)&enterBusData, P_FE2CL_TRANSPORTATION_ENTER, sizeof(sP_FE2CL_TRANSPORTATION_ENTER));
+                npc->playersInView++;
             }
         }
         break;
@@ -259,6 +261,7 @@ void ChunkManager::addNPCToChunks(std::set<Chunk*> chnks, int32_t id) {
             for (CNSocket* sock : chunk->players) {
                 // send to socket
                 sock->sendPacket((void*)&enterEggData, P_FE2CL_SHINY_ENTER, sizeof(sP_FE2CL_SHINY_ENTER));
+                npc->playersInView++;
             }
         }
         break;
@@ -271,6 +274,7 @@ void ChunkManager::addNPCToChunks(std::set<Chunk*> chnks, int32_t id) {
             for (CNSocket* sock : chunk->players) {
                 // send to socket
                 sock->sendPacket((void*)&enterData, P_FE2CL_NPC_ENTER, sizeof(sP_FE2CL_NPC_ENTER));
+                npc->playersInView++;
             }
         }
         break;
@@ -286,6 +290,8 @@ void ChunkManager::removePlayerFromChunks(std::set<Chunk*> chnks, CNSocket* sock
         // remove NPCs from view
         for (int32_t id : chunk->NPCs) {
             BaseNPC* npc = NPCManager::NPCs[id];
+            npc->playersInView--;
+
             switch (npc->npcClass) {
             case NPC_BUS:
                 INITSTRUCT(sP_FE2CL_TRANSPORTATION_EXIT, exitBusData);
@@ -332,6 +338,7 @@ void ChunkManager::removeNPCFromChunks(std::set<Chunk*> chnks, int32_t id) {
             for (CNSocket* sock : chunk->players) {
                 // send to socket
                 sock->sendPacket((void*)&exitBusData, P_FE2CL_TRANSPORTATION_EXIT, sizeof(sP_FE2CL_TRANSPORTATION_EXIT));
+                npc->playersInView--;
             }
         }
         break;
@@ -343,6 +350,7 @@ void ChunkManager::removeNPCFromChunks(std::set<Chunk*> chnks, int32_t id) {
             for (CNSocket* sock : chunk->players) {
                 // send to socket
                 sock->sendPacket((void*)&exitEggData, P_FE2CL_SHINY_EXIT, sizeof(sP_FE2CL_SHINY_EXIT));
+                npc->playersInView--;
             }
         }
         break;
@@ -356,6 +364,7 @@ void ChunkManager::removeNPCFromChunks(std::set<Chunk*> chnks, int32_t id) {
             for (CNSocket* sock : chunk->players) {
                 // send to socket
                 sock->sendPacket((void*)&exitData, P_FE2CL_NPC_EXIT, sizeof(sP_FE2CL_NPC_EXIT));
+                npc->playersInView--;
             }
         }
         break;
@@ -427,6 +436,9 @@ std::vector<ChunkPos> ChunkManager::getChunksInMap(uint64_t mapNum) {
     return chnks;
 }
 
+/*
+ * Used only for eggs; use npc->playersInView for everything visible
+ */
 bool ChunkManager::inPopulatedChunks(std::set<Chunk*>* chnks) {
 
     for (auto it = chnks->begin(); it != chnks->end(); it++) {
@@ -445,20 +457,50 @@ void ChunkManager::createInstance(uint64_t instanceID) {
         for (ChunkPos &coords : templateChunks) {
             for (int npcID : chunks[coords]->NPCs) {
                 // make a copy of each NPC in the template chunks and put them in the new instance
-                int newID = NPCManager::nextId++;
                 BaseNPC* baseNPC = NPCManager::NPCs[npcID];
                 if (baseNPC->npcClass == NPC_MOB) {
+                    if (((Mob*)baseNPC)->groupLeader != 0 && ((Mob*)baseNPC)->groupLeader != npcID)
+                        continue; // follower; don't copy individually
+
                     Mob* newMob = new Mob(baseNPC->appearanceData.iX, baseNPC->appearanceData.iY, baseNPC->appearanceData.iZ, baseNPC->appearanceData.iAngle,
-                        instanceID, baseNPC->appearanceData.iNPCType, ((Mob*)baseNPC)->maxHealth, NPCManager::NPCData[baseNPC->appearanceData.iNPCType], newID);
-                    NPCManager::NPCs[newID] = newMob;
-                    MobManager::Mobs[newID] = newMob;
+                        instanceID, baseNPC->appearanceData.iNPCType, ((Mob*)baseNPC)->maxHealth, NPCManager::NPCData[baseNPC->appearanceData.iNPCType], NPCManager::nextId++);
+                    NPCManager::NPCs[newMob->appearanceData.iNPC_ID] = newMob;
+                    MobManager::Mobs[newMob->appearanceData.iNPC_ID] = newMob;
+
+                    // if in a group, copy over group members as well
+                    if (((Mob*)baseNPC)->groupLeader != 0) {
+                        newMob->groupLeader = newMob->appearanceData.iNPC_ID; // set leader ID for new leader
+                        Mob* mobData = (Mob*)baseNPC;
+                        for (int i = 0; i < 4; i++) {
+                            if (mobData->groupMember[i] != 0) {
+                                int followerID = NPCManager::nextId++; // id for follower
+                                BaseNPC* baseFollower = NPCManager::NPCs[mobData->groupMember[i]]; // follower from template
+                                // new follower instance
+                                Mob* newMobFollower = new Mob(baseFollower->appearanceData.iX, baseFollower->appearanceData.iY, baseFollower->appearanceData.iZ, baseFollower->appearanceData.iAngle,
+                                    instanceID, baseFollower->appearanceData.iNPCType, ((Mob*)baseFollower)->maxHealth, NPCManager::NPCData[baseFollower->appearanceData.iNPCType], followerID);
+                                // add follower to NPC maps
+                                NPCManager::NPCs[followerID] = newMobFollower;
+                                MobManager::Mobs[followerID] = newMobFollower;
+                                // set follower-specific properties
+                                newMobFollower->groupLeader = newMob->appearanceData.iNPC_ID;
+                                newMobFollower->offsetX = ((Mob*)baseFollower)->offsetX;
+                                newMobFollower->offsetY = ((Mob*)baseFollower)->offsetY;
+                                // add follower copy to leader copy
+                                newMob->groupMember[i] = followerID;
+                                NPCManager::updateNPCPosition(followerID, baseFollower->appearanceData.iX, baseFollower->appearanceData.iY, baseFollower->appearanceData.iZ,
+                                    instanceID, baseFollower->appearanceData.iAngle);
+                            }
+                        }
+                    }
+                    NPCManager::updateNPCPosition(newMob->appearanceData.iNPC_ID, baseNPC->appearanceData.iX, baseNPC->appearanceData.iY, baseNPC->appearanceData.iZ,
+                        instanceID, baseNPC->appearanceData.iAngle);
                 } else {
                     BaseNPC* newNPC = new BaseNPC(baseNPC->appearanceData.iX, baseNPC->appearanceData.iY, baseNPC->appearanceData.iZ, baseNPC->appearanceData.iAngle,
-                        instanceID, baseNPC->appearanceData.iNPCType, newID);
-                    NPCManager::NPCs[newID] = newNPC;
+                        instanceID, baseNPC->appearanceData.iNPCType, NPCManager::nextId++);
+                    NPCManager::NPCs[newNPC->appearanceData.iNPC_ID] = newNPC;
+                    NPCManager::updateNPCPosition(newNPC->appearanceData.iNPC_ID, baseNPC->appearanceData.iX, baseNPC->appearanceData.iY, baseNPC->appearanceData.iZ,
+                        instanceID, baseNPC->appearanceData.iAngle);
                 }
-                NPCManager::updateNPCPosition(newID, baseNPC->appearanceData.iX, baseNPC->appearanceData.iY, baseNPC->appearanceData.iZ,
-                    instanceID, baseNPC->appearanceData.iAngle);
             }
         }
     } else {

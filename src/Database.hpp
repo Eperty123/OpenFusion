@@ -119,7 +119,9 @@ namespace Database {
     int addAccount(std::string login, std::string password);
     void updateSelected(int accountId, int playerId);
     std::unique_ptr<Account> findAccount(std::string login);
-    bool isNameFree(sP_CL2LS_REQ_CHECK_CHAR_NAME* nameCheck);
+    bool validateCharacter(int characterID, int userID);
+    bool isNameFree(std::string firstName, std::string lastName);
+    bool isSlotFree(int accountId, int slotNum);
     // called after chosing name, returns ID
     int createCharacter(sP_CL2LS_REQ_SAVE_CHAR_NAME* save, int AccountID);
     // called after finishing creation
@@ -129,6 +131,7 @@ namespace Database {
     // returns slot number
     int deleteCharacter(int characterID, int userID);
     std::vector <Player> getCharacters(int userID);
+    std::vector <sP_LS2CL_REP_CHAR_INFO> getCharInfo(int userID);
     // accepting/declining custom name
     enum class CustomName {
         APPROVE = 1,

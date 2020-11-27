@@ -84,6 +84,7 @@ void NPCManager::destroyNPC(int32_t id) {
         Eggs.erase(id);
 
     // finally, remove it from the map and free it
+    delete entity->viewableChunks;
     NPCs.erase(id);
     delete entity;
 }
@@ -277,10 +278,10 @@ void NPCManager::npcVendorTable(CNSocket* sock, CNPacketData* data) {
 
     sP_CL2FE_REQ_PC_VENDOR_TABLE_UPDATE* req = (sP_CL2FE_REQ_PC_VENDOR_TABLE_UPDATE*)data->buf;
 
-    if (req->iVendorID != req->iNPC_ID || ItemManager::VendorTables.find(req->iNPC_ID) == ItemManager::VendorTables.end())
+    if (req->iVendorID != req->iNPC_ID || ItemManager::VendorTables.find(req->iVendorID) == ItemManager::VendorTables.end())
         return;
 
-    std::vector<VendorListing> listings = ItemManager::VendorTables[req->iNPC_ID]; // maybe use iVendorID instead...?
+    std::vector<VendorListing> listings = ItemManager::VendorTables[req->iVendorID];
 
     INITSTRUCT(sP_FE2CL_REP_PC_VENDOR_TABLE_UPDATE_SUCC, resp);
 
@@ -543,6 +544,7 @@ void NPCManager::handleWarp(CNSocket* sock, int32_t warpId) {
         resp.eIL = 4; // do not take away any items
         plr->instanceID = INSTANCE_OVERWORLD;
         sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_WARP_USE_NPC_SUCC, sizeof(sP_FE2CL_REP_PC_WARP_USE_NPC_SUCC));
+        ChunkManager::updatePlayerChunk(sock, plr->chunkPos, std::make_tuple(0, 0, 0)); // force player to reload chunks
         PlayerManager::updatePlayerPosition(sock, resp.iX, resp.iY, resp.iZ, INSTANCE_OVERWORLD, plr->angle);
     }
 }
@@ -550,10 +552,10 @@ void NPCManager::handleWarp(CNSocket* sock, int32_t warpId) {
 /*
  * Helper function to get NPC closest to coordinates in specified chunks
  */
-BaseNPC* NPCManager::getNearestNPC(std::vector<Chunk*> chunks, int X, int Y, int Z) {
+BaseNPC* NPCManager::getNearestNPC(std::set<Chunk*>* chunks, int X, int Y, int Z) {
     BaseNPC* npc = nullptr;
     int lastDist = INT_MAX;
-    for (auto c = chunks.begin(); c != chunks.end(); c++) { // haha get it
+    for (auto c = chunks->begin(); c != chunks->end(); c++) { // haha get it
         Chunk* chunk = *c;
         for (auto _npc = chunk->NPCs.begin(); _npc != chunk->NPCs.end(); _npc++) {
             BaseNPC* npcTemp = NPCs[*_npc];
@@ -769,11 +771,10 @@ void NPCManager::eggPickup(CNSocket* sock, CNPacketData* data) {
 
     int typeId = egg->appearanceData.iNPCType;
     if (EggTypes.find(typeId) == EggTypes.end()) {
-        if (egg->npcClass != NPCClass::NPC_EGG) {
-            std::cout << "[WARN] Egg Type " << typeId << " not found!" << std::endl;
-            return;
-        }
+        std::cout << "[WARN] Egg Type " << typeId << " not found!" << std::endl;
+        return;
     }
+
     EggType* type = &EggTypes[typeId];
 
     // buff the player

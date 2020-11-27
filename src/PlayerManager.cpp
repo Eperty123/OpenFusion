@@ -81,6 +81,7 @@ void PlayerManager::removePlayer(CNSocket* key) {
 
     std::cout << getPlayerName(key->plr) << " has left!" << std::endl;
 
+    delete plr->viewableChunks;
     key->plr = nullptr;
     delete plr;
     players.erase(key);
@@ -117,6 +118,7 @@ void PlayerManager::updatePlayerPosition(CNSocket* sock, int X, int Y, int Z, ui
 
 void PlayerManager::sendPlayerTo(CNSocket* sock, int X, int Y, int Z, uint64_t I) {
     Player* plr = getPlayer(sock);
+    plr->onMonkey = false;
 
     if (plr->instanceID == INSTANCE_OVERWORLD) {
         // save last uninstanced coords
@@ -151,6 +153,7 @@ void PlayerManager::sendPlayerTo(CNSocket* sock, int X, int Y, int Z, uint64_t I
     pkt2.iY = Y;
     pkt2.iZ = Z;
     sock->sendPacket((void*)&pkt2, P_FE2CL_REP_PC_GOTO_SUCC, sizeof(sP_FE2CL_REP_PC_GOTO_SUCC));
+    ChunkManager::updatePlayerChunk(sock, plr->chunkPos, std::make_tuple(0, 0, 0)); // force player to reload chunks
     updatePlayerPosition(sock, X, Y, Z, I, plr->angle);
 
     // post-warp: check if the source instance has no more players in it and delete it if so
@@ -657,7 +660,7 @@ void PlayerManager::setSpecialPlayer(CNSocket* sock, CNPacketData* data) {
             plr->batteryN = 9999;
         break;
     case 4:
-        plr->fusionmatter = setData->iSetValue;
+        MissionManager::updateFusionMatter(sock, setData->iSetValue - plr->fusionmatter);
         break;
     case 5:
         plr->money = setData->iSetValue;
@@ -699,7 +702,7 @@ void PlayerManager::revivePlayer(CNSocket* sock, CNPacketData* data) {
     if (plr == nullptr)
         return;
 
-    WarpLocation target = PlayerManager::getRespawnPoint(plr);
+    WarpLocation* target = PlayerManager::getRespawnPoint(plr);
 
     sP_CL2FE_REQ_PC_REGEN* reviveData = (sP_CL2FE_REQ_PC_REGEN*)data->buf;
     INITSTRUCT(sP_FE2CL_REP_PC_REGEN_SUCC, response);
@@ -707,13 +710,15 @@ void PlayerManager::revivePlayer(CNSocket* sock, CNPacketData* data) {
 
     int activeSlot = -1;
 
+    bool move = false;
+
     if (reviveData->iRegenType == 3 && plr->iConditionBitFlag & CSB_BIT_PHOENIX) {
         // nano revive
         plr->Nanos[plr->activeNano].iStamina = 0;
         NanoManager::nanoUnbuff(sock, CSB_BIT_PHOENIX, ECSB_PHOENIX, 0, false);
         plr->HP = PC_MAXHEALTH(plr->level);
     } else {
-        updatePlayerPosition(sock, target.x, target.y, target.z, plr->instanceID, plr->angle);
+        move = true;
 
         if (reviveData->iRegenType != 5)
             plr->HP = PC_MAXHEALTH(plr->level);
@@ -732,9 +737,15 @@ void PlayerManager::revivePlayer(CNSocket* sock, CNPacketData* data) {
 
     // Response parameters
     response.PCRegenData.iActiveNanoSlotNum = activeSlot;
-    response.PCRegenData.iX = plr->x;
-    response.PCRegenData.iY = plr->y;
-    response.PCRegenData.iZ = plr->z;
+    if (move && target != nullptr) {
+        response.PCRegenData.iX = target->x;
+        response.PCRegenData.iY = target->y;
+        response.PCRegenData.iZ = target->z;
+    } else {
+        response.PCRegenData.iX = plr->x;
+        response.PCRegenData.iY = plr->y;
+        response.PCRegenData.iZ = plr->z;
+    }
     response.PCRegenData.iHP = plr->HP;
     response.iFusionMatter = plr->fusionmatter;
     response.bMoveLocation = 0;
@@ -755,6 +766,12 @@ void PlayerManager::revivePlayer(CNSocket* sock, CNPacketData* data) {
     resp2.PCRegenDataForOtherPC.Nano = plr->Nanos[plr->activeNano];
 
     sendToViewable(sock, (void*)&resp2, P_FE2CL_PC_REGEN, sizeof(sP_FE2CL_PC_REGEN));
+
+    if (!move || target == nullptr)
+        return;
+
+    ChunkManager::updatePlayerChunk(sock, plr->chunkPos, std::make_tuple(0, 0, 0)); // force player to reload chunks
+    updatePlayerPosition(sock, target->x, target->y, target->z, plr->instanceID, plr->angle);
 }
 
 void PlayerManager::enterPlayerVehicle(CNSocket* sock, CNPacketData* data) {
@@ -864,14 +881,14 @@ std::string PlayerManager::getPlayerName(Player *plr, bool id) {
     return ret;
 }
 
-WarpLocation PlayerManager::getRespawnPoint(Player *plr) {
-    WarpLocation best;
+WarpLocation* PlayerManager::getRespawnPoint(Player *plr) {
+    WarpLocation* best = nullptr;
     uint32_t curDist, bestDist = UINT32_MAX;
 
-    for (auto targ : NPCManager::RespawnPoints) {
+    for (auto& targ : NPCManager::RespawnPoints) {
         curDist = sqrt(pow(plr->x - targ.x, 2) + pow(plr->y - targ.y, 2));
         if (curDist < bestDist && targ.instanceID == MAPNUM(plr->instanceID)) { // only mapNum needs to match
-            best = targ;
+            best = &targ;
             bestDist = curDist;
         }
     }

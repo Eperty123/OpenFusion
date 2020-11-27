@@ -166,6 +166,7 @@ int Database::addAccount(std::string login, std::string password) {
     account.Password = password;
     account.Selected = 1;
     account.Created = getTimestamp();
+    account.LastLogin = account.Created;
     return db.insert(account);
 }
 
@@ -191,15 +192,29 @@ std::unique_ptr<Database::Account> Database::findAccount(std::string login) {
         std::unique_ptr<Account>(new Account(find.front()));
 }
 
-bool Database::isNameFree(sP_CL2LS_REQ_CHECK_CHAR_NAME* nameCheck) {
+bool Database::validateCharacter(int characterID, int userID) {
+    return db.select(&DbPlayer::PlayerID,
+        where((c(&DbPlayer::PlayerID) == characterID) && (c(&DbPlayer::AccountID) == userID)))
+        .size() > 0;
+}
+
+bool Database::isNameFree(std::string firstName, std::string lastName) {
     std::lock_guard<std::mutex> lock(dbCrit);
 
-    std::string First = U16toU8(nameCheck->szFirstName);
-    std::string Last = U16toU8(nameCheck->szLastName);
     return
         (db.get_all<DbPlayer>
-            (where((c(&DbPlayer::FirstName) == First)
-                and (c(&DbPlayer::LastName) == Last)))
+            (where((c(&DbPlayer::FirstName) == firstName)
+                and (c(&DbPlayer::LastName) == lastName)))
+            .empty());
+}
+
+bool Database::isSlotFree(int accountId, int slotNum) {
+    std::lock_guard<std::mutex> lock(dbCrit);
+
+    return
+        (db.get_all<DbPlayer>
+            (where((c(&DbPlayer::AccountID) == accountId)
+                and (c(&DbPlayer::slot) == slotNum)))
             .empty());
 }
 
@@ -357,6 +372,56 @@ std::vector <Player> Database::getCharacters(int UserID) {
     return result;
 }
 
+std::vector <sP_LS2CL_REP_CHAR_INFO> Database::getCharInfo(int userID) {
+    std::lock_guard<std::mutex> lock(dbCrit);
+
+    std::vector<DbPlayer>characters =
+        db.get_all<DbPlayer>(where
+        (c(&DbPlayer::AccountID) == userID));
+
+    std::vector<sP_LS2CL_REP_CHAR_INFO> result = std::vector<sP_LS2CL_REP_CHAR_INFO>();
+    for (auto& character : characters) {
+        sP_LS2CL_REP_CHAR_INFO toAdd = {};
+        toAdd.iX = character.x_coordinates;
+        toAdd.iY = character.y_coordinates;
+        toAdd.iZ = character.z_coordinates;
+        toAdd.iLevel = character.Level;
+        toAdd.iSlot =  character.slot;
+        toAdd.sPC_Style.iBody =      character.Body;
+        toAdd.sPC_Style.iClass =     character.Class;
+        toAdd.sPC_Style.iEyeColor =  character.EyeColor;
+        toAdd.sPC_Style.iFaceStyle = character.FaceStyle;
+        toAdd.sPC_Style.iGender =    character.Gender;
+        toAdd.sPC_Style.iHairColor = character.HairColor;
+        toAdd.sPC_Style.iHairStyle = character.HairStyle;
+        toAdd.sPC_Style.iHeight =    character.Height;
+        toAdd.sPC_Style.iNameCheck = character.NameCheck;
+        toAdd.sPC_Style.iPC_UID =    character.PlayerID;
+        toAdd.sPC_Style.iSkinColor = character.SkinColor;
+        U8toU16(character.FirstName, toAdd.sPC_Style.szFirstName, sizeof(toAdd.sPC_Style.szFirstName));
+        U8toU16(character.LastName,  toAdd.sPC_Style.szLastName,  sizeof(toAdd.sPC_Style.szLastName));
+        toAdd.sPC_Style2.iAppearanceFlag = character.AppearanceFlag;
+        toAdd.sPC_Style2.iPayzoneFlag =    character.PayZoneFlag;
+        toAdd.sPC_Style2.iTutorialFlag =   character.TutorialFlag;
+
+        //get equipment
+        auto items = db.get_all<Inventory>(
+            where(c(&Inventory::playerId) == character.PlayerID && c(&Inventory::slot) < AEQUIP_COUNT));
+
+        for (auto& item : items) {
+            sItemBase addItem = {};
+            addItem.iID = item.id;
+            addItem.iType = item.Type;
+            addItem.iOpt = item.Opt;
+            addItem.iTimeLimit = item.TimeLimit;
+            toAdd.aEquip[item.slot] = addItem;
+        }
+
+        result.push_back(toAdd);
+    }
+    return result;
+}
+
 // XXX: This is never called?
 void Database::evaluateCustomName(int characterID, CustomName decision) {
     std::lock_guard<std::mutex> lock(dbCrit);
@@ -407,7 +472,7 @@ Database::DbPlayer Database::playerToDb(Player *player) {
     result.slot = player->slot;
     result.Taros = player->money;
     result.TutorialFlag = player->PCStyle2.iTutorialFlag;
-    if (player->instanceID == 0) { // only save coords if player isn't instanced
+    if (player->instanceID == 0 && !player->onMonkey) { // only save coords if player isn't instanced
         result.x_coordinates = player->x;
         result.y_coordinates = player->y;
         result.z_coordinates = player->z;
