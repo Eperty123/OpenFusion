@@ -715,24 +715,24 @@ void PlayerManager::revivePlayer(CNSocket* sock, CNPacketData* data) {
     if (reviveData->iRegenType == 3 && plr->iConditionBitFlag & CSB_BIT_PHOENIX) {
         // nano revive
         plr->Nanos[plr->activeNano].iStamina = 0;
-        NanoManager::nanoUnbuff(sock, CSB_BIT_PHOENIX, ECSB_PHOENIX, 0, false);
+        plr->HP = PC_MAXHEALTH(plr->level);
+        NanoManager::applyBuff(sock, plr->Nanos[plr->activeNano].iSkillID, 2, 1, 0);
+    } else if (reviveData->iRegenType == 4) {
         plr->HP = PC_MAXHEALTH(plr->level);
     } else {
         move = true;
-
         if (reviveData->iRegenType != 5)
             plr->HP = PC_MAXHEALTH(plr->level);
+    }
 
-        for (int i = 0; i < 3; i++) {
-            int nanoID = plr->equippedNanos[i];
-
-            // halve nano health if respawning
-            if (reviveData->iRegenType != 5)
-                plr->Nanos[nanoID].iStamina = 75; // max is 150, so 75 is half
-            response.PCRegenData.Nanos[i] = plr->Nanos[nanoID];
-            if (plr->activeNano == nanoID)
-                activeSlot = i;
-        }
+    for (int i = 0; i < 3; i++) {
+        int nanoID = plr->equippedNanos[i];
+        // halve nano health if respawning
+        if (reviveData->iRegenType == 6)
+            plr->Nanos[nanoID].iStamina = 75; // max is 150, so 75 is half
+        response.PCRegenData.Nanos[i] = plr->Nanos[nanoID];
+        if (plr->activeNano == nanoID)
+            activeSlot = i;
     }
 
     // Response parameters
@@ -760,7 +760,13 @@ void PlayerManager::revivePlayer(CNSocket* sock, CNPacketData* data) {
     resp2.PCRegenDataForOtherPC.iZ = plr->z;
     resp2.PCRegenDataForOtherPC.iHP = plr->HP;
     resp2.PCRegenDataForOtherPC.iAngle = plr->angle;
-    resp2.PCRegenDataForOtherPC.iConditionBitFlag = plr->iConditionBitFlag;
+
+    Player *otherPlr = PlayerManager::getPlayerFromID(plr->iIDGroup);
+    if (otherPlr == nullptr)
+        return;
+    int bitFlag = GroupManager::getGroupFlags(otherPlr);
+    resp2.PCRegenDataForOtherPC.iConditionBitFlag = plr->iConditionBitFlag = plr->iSelfConditionBitFlag | bitFlag;
+
     resp2.PCRegenDataForOtherPC.iPCState = plr->iPCState;
     resp2.PCRegenDataForOtherPC.iSpecialState = plr->iSpecialState;
     resp2.PCRegenDataForOtherPC.Nano = plr->Nanos[plr->activeNano];

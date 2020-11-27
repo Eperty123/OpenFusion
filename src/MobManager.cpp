@@ -181,12 +181,26 @@ void MobManager::giveReward(CNSocket *sock, Mob* mob) {
     MobDrop& drop = MobDrops[mob->dropType];
 
     plr->money += drop.taros;
+    // money nano boost
+    if (plr->iConditionBitFlag & CSB_BIT_REWARD_CASH) {
+        int boost = 0;
+        if (NanoManager::getNanoBoost(plr)) // for gumballs
+            boost = 1;
+        plr->money += drop.taros * (5 + boost) / 25;
+    }
     // formula for scaling FM with player/mob level difference
     // TODO: adjust this better
     int levelDifference = plr->level - mob->level;
     int fm = drop.fm;
     if (levelDifference > 0)
         fm = levelDifference < 10 ? fm - (levelDifference * fm / 10) : 0;
+    // scavenger nano boost
+    if (plr->iConditionBitFlag & CSB_BIT_REWARD_BLOB) {
+        int boost = 0;
+        if (NanoManager::getNanoBoost(plr)) // for gumballs
+            boost = 1;
+        fm += fm * (5 + boost) / 25;
+    }
 
     MissionManager::updateFusionMatter(sock, fm);
 
@@ -505,7 +519,7 @@ void MobManager::combatStep(Mob *mob, time_t currTime) {
 
     // drain
     if ((mob->lastDrainTime == 0 || currTime - mob->lastDrainTime >= 1000) && mob->appearanceData.iConditionBitFlag & CSB_BIT_BOUNDINGBALL) {
-        drainMobHP(mob, mob->maxHealth / 15); // lose 6.67% every second
+        drainMobHP(mob, mob->maxHealth / 20); // lose 5% every second
         mob->lastDrainTime = currTime;
     }
 
@@ -847,7 +861,7 @@ void MobManager::dotDamageOnOff(CNSocket *sock, CNPacketData *data) {
     pkt1.eCSTB = ECSB_INFECTION; // eCharStatusTimeBuffID
     pkt1.eTBU = 1; // eTimeBuffUpdate
     pkt1.eTBT = 0; // eTimeBuffType 1 means nano
-    pkt1.iConditionBitFlag = plr->iConditionBitFlag | plr->iGroupConditionBitFlag | plr->iEggConditionBitFlag;
+    pkt1.iConditionBitFlag = plr->iConditionBitFlag;
 
     sock->sendPacket((void*)&pkt1, P_FE2CL_PC_BUFF_UPDATE, sizeof(sP_FE2CL_PC_BUFF_UPDATE));
 }
@@ -870,8 +884,8 @@ void MobManager::dealGooDamage(CNSocket *sock, int amount) {
         amount = -2; // -2 is the magic number for "Protected" to appear as the damage number
         dmg->bProtected = 1;
 
-        // it's hypothetically possible to have the protection bit without a nano
-        if (plr->activeNano != -1)
+        // eggs allow protection without nanos
+        if (plr->activeNano != -1 && (plr->iSelfConditionBitFlag & CSB_BIT_PROTECT_INFECTION))
             plr->Nanos[plr->activeNano].iStamina -= 3;
     } else {
         plr->HP -= amount;
@@ -895,7 +909,7 @@ void MobManager::dealGooDamage(CNSocket *sock, int amount) {
     dmg->iID = plr->iID;
     dmg->iDamage = amount;
     dmg->iHP = plr->HP;
-    dmg->iConditionBitFlag = plr->iConditionBitFlag | plr->iGroupConditionBitFlag | plr->iEggConditionBitFlag;
+    dmg->iConditionBitFlag = plr->iConditionBitFlag;
 
     sock->sendPacket((void*)&respbuf, P_FE2CL_CHAR_TIME_BUFF_TIME_TICK, resplen);
     PlayerManager::sendToViewable(sock, (void*)&respbuf, P_FE2CL_CHAR_TIME_BUFF_TIME_TICK, resplen);
@@ -934,14 +948,22 @@ void MobManager::playerTick(CNServer *serv, time_t currTime) {
 
         for (int i = 0; i < 3; i++) {
             if (plr->activeNano != 0 && plr->equippedNanos[i] == plr->activeNano) { // spend stamina
-                plr->Nanos[plr->activeNano].iStamina -= 1;
-
-                if (plr->passiveNanoOut)
-                   plr->Nanos[plr->activeNano].iStamina -= 1;
+                plr->Nanos[plr->activeNano].iStamina -= 1 + plr->nanoDrainRate * 2 / 5;
 
                 if (plr->Nanos[plr->activeNano].iStamina <= 0) {
+                    // passive nano unbuffing
+                    int skillID = plr->Nanos[plr->activeNano].iSkillID;
+                    if (NanoManager::SkillTable[skillID].drainType == 2) {
+                        std::vector<int> targetData = NanoManager::findTargets(plr, skillID);
+
+                        for (auto& pwr : NanoManager::NanoPowers)
+                            if (pwr.skillType == NanoManager::SkillTable[skillID].skillType)
+                                NanoManager::nanoUnbuff(sock, targetData, pwr.bitFlag, pwr.timeBuffID, 0, (NanoManager::SkillTable[skillID].targetType == 3));
+                    }
+
                     plr->Nanos[plr->activeNano].iStamina = 0;
-                    NanoManager::summonNano(PlayerManager::getSockFromID(plr->iID), -1);
+                    plr->activeNano = 0;
+                    plr->nanoDrainRate = 0;
                 }
 
                 transmit = true;
@@ -989,7 +1011,11 @@ std::pair<int,int> MobManager::getDamage(int attackPower, int defensePower, bool
 
     // Adaptium/Blastons/Cosmix
     if (attackerStyle != -1 && defenderStyle != -1 && attackerStyle != defenderStyle) {
-        if (attackerStyle < defenderStyle || attackerStyle - defenderStyle == 2) 
+        if (attackerStyle - defenderStyle == 2)
+            defenderStyle += 3;
+        if (defenderStyle - attackerStyle == 2)
+            defenderStyle -= 3;
+        if (attackerStyle < defenderStyle) 
             damage = damage * 3 / 2;
         else
             damage = damage * 2 / 3;
