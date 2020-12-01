@@ -24,27 +24,27 @@ std::map<CNSocket*, Player*> PlayerManager::players;
 
 void PlayerManager::init() {
     // register packet types
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_ENTER, PlayerManager::enterPlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_LOADING_COMPLETE, PlayerManager::loadPlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_MOVE, PlayerManager::movePlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_STOP, PlayerManager::stopPlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_JUMP, PlayerManager::jumpPlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_JUMPPAD, PlayerManager::jumppadPlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_LAUNCHER, PlayerManager::launchPlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_ZIPLINE, PlayerManager::ziplinePlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_MOVEPLATFORM, PlayerManager::movePlatformPlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_MOVETRANSPORTATION, PlayerManager::moveSliderPlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_SLOPE, PlayerManager::moveSlopePlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_GOTO, PlayerManager::gotoPlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_GM_REQ_PC_SET_VALUE, PlayerManager::setSpecialPlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_REP_LIVE_CHECK, PlayerManager::heartbeatPlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_REGEN, PlayerManager::revivePlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_EXIT, PlayerManager::exitGame);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_SPECIAL_STATE_SWITCH, PlayerManager::setSpecialSwitchPlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_GM_REQ_PC_SPECIAL_STATE_SWITCH, PlayerManager::setGMSpecialSwitchPlayer);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_VEHICLE_ON, PlayerManager::enterPlayerVehicle);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_VEHICLE_OFF, PlayerManager::exitPlayerVehicle);
-    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_CHANGE_MENTOR, PlayerManager::changePlayerGuide);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_ENTER, enterPlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_LOADING_COMPLETE, loadPlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_MOVE, movePlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_STOP, stopPlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_JUMP, jumpPlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_JUMPPAD, jumppadPlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_LAUNCHER, launchPlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_ZIPLINE, ziplinePlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_MOVEPLATFORM, movePlatformPlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_MOVETRANSPORTATION, moveSliderPlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_SLOPE, moveSlopePlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_GOTO, gotoPlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_GM_REQ_PC_SET_VALUE, setSpecialPlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_REP_LIVE_CHECK, heartbeatPlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_REGEN, revivePlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_EXIT, exitGame);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_SPECIAL_STATE_SWITCH, setSpecialSwitchPlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_GM_REQ_PC_SPECIAL_STATE_SWITCH, setGMSpecialSwitchPlayer);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_VEHICLE_ON, enterPlayerVehicle);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_VEHICLE_OFF, exitPlayerVehicle);
+    REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_CHANGE_MENTOR, changePlayerGuide);
 }
 
 void PlayerManager::addPlayer(CNSocket* key, Player plr) {
@@ -56,8 +56,6 @@ void PlayerManager::addPlayer(CNSocket* key, Player plr) {
     p->chunkPos = std::make_tuple(0, 0, 0);
     p->viewableChunks = new std::set<Chunk*>();
     p->lastHeartbeat = 0;
-
-    key->plr = p;
 
     std::cout << getPlayerName(p) << " has joined!" << std::endl;
     std::cout << players.size() << " players" << std::endl;
@@ -79,10 +77,9 @@ void PlayerManager::removePlayer(CNSocket* key) {
     ChunkManager::removePlayerFromChunks(ChunkManager::getViewableChunks(plr->chunkPos), key);
     ChunkManager::untrackPlayer(plr->chunkPos, key);
 
-    std::cout << getPlayerName(key->plr) << " has left!" << std::endl;
+    std::cout << getPlayerName(plr) << " has left!" << std::endl;
 
     delete plr->viewableChunks;
-    key->plr = nullptr;
     delete plr;
     players.erase(key);
 
@@ -630,9 +627,6 @@ void PlayerManager::setSpecialPlayer(CNSocket* sock, CNPacketData* data) {
     sP_CL2FE_GM_REQ_PC_SET_VALUE* setData = (sP_CL2FE_GM_REQ_PC_SET_VALUE*)data->buf;
     Player *plr = PlayerManager::getPlayer(sock);
 
-    if (plr == nullptr)
-        return;
-
     INITSTRUCT(sP_FE2CL_GM_REP_PC_SET_VALUE, response);
 
     DEBUGLOG(
@@ -699,9 +693,6 @@ void PlayerManager::revivePlayer(CNSocket* sock, CNPacketData* data) {
 
     Player *plr = PlayerManager::getPlayer(sock);
 
-    if (plr == nullptr)
-        return;
-
     WarpLocation* target = PlayerManager::getRespawnPoint(plr);
 
     sP_CL2FE_REQ_PC_REGEN* reviveData = (sP_CL2FE_REQ_PC_REGEN*)data->buf;
@@ -728,7 +719,8 @@ void PlayerManager::revivePlayer(CNSocket* sock, CNPacketData* data) {
     for (int i = 0; i < 3; i++) {
         int nanoID = plr->equippedNanos[i];
         // halve nano health if respawning
-        if (reviveData->iRegenType == 6)
+        // all revives not 3-5 are normal respawns.
+        if (reviveData->iRegenType < 3 && reviveData->iRegenType > 5)
             plr->Nanos[nanoID].iStamina = 75; // max is 150, so 75 is half
         response.PCRegenData.Nanos[i] = plr->Nanos[nanoID];
         if (plr->activeNano == nanoID)
@@ -871,7 +863,8 @@ Player *PlayerManager::getPlayer(CNSocket* key) {
     if (players.find(key) != players.end())
         return players[key];
 
-    return nullptr;
+    // this should never happen
+    assert(false);
 }
 
 std::string PlayerManager::getPlayerName(Player *plr, bool id) {
@@ -934,9 +927,6 @@ void PlayerManager::setSpecialState(CNSocket* sock, CNPacketData* data) {
         return; // ignore the malformed packet
 
     Player *plr = getPlayer(sock);
-
-    if (plr == nullptr)
-        return;
 
     sP_CL2FE_GM_REQ_PC_SPECIAL_STATE_SWITCH* setData = (sP_CL2FE_GM_REQ_PC_SPECIAL_STATE_SWITCH*)data->buf;
 

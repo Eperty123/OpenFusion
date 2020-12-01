@@ -18,7 +18,7 @@ void MissionManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_TASK_STOP, quitMission);
 }
 
-bool startTask(Player* plr, int TaskID, bool NanoMission) {
+bool MissionManager::startTask(Player* plr, int TaskID, bool NanoMission) {
     if (MissionManager::Tasks.find(TaskID) == MissionManager::Tasks.end()) {
         std::cout << "[WARN] Player submitted unknown task!?" << std::endl;
         return false;
@@ -67,9 +67,6 @@ void MissionManager::taskStart(CNSocket* sock, CNPacketData* data) {
     INITSTRUCT(sP_FE2CL_REP_PC_TASK_START_SUCC, response);
     Player *plr = PlayerManager::getPlayer(sock);
 
-    if (plr == nullptr)
-        return;
-
     if (!startTask(plr, missionData->iTaskNum, false)) {
         // TODO: TASK_FAIL?
         response.iTaskNum = missionData->iTaskNum;
@@ -110,7 +107,7 @@ void MissionManager::taskEnd(CNSocket* sock, CNPacketData* data) {
     if (missionData->iNPC_ID == 0) {
         TaskData* task = MissionManager::Tasks[missionData->iTaskNum];
         // double-checking
-        if (task->task["m_iHTaskType"] == 3) {
+        if (task->task["m_iSTGrantTimer"] > 0) {
             Player* plr = PlayerManager::getPlayer(sock);
             int failTaskID = task->task["m_iFOutgoingTask"];
             if (failTaskID != 0) {
@@ -137,9 +134,6 @@ void MissionManager::taskEnd(CNSocket* sock, CNPacketData* data) {
 
 bool MissionManager::endTask(CNSocket *sock, int32_t taskNum) {
     Player *plr = PlayerManager::getPlayer(sock);
-
-    if (plr == nullptr)
-        return false;
 
     if (Tasks.find(taskNum) == Tasks.end())
         return false;
@@ -207,9 +201,6 @@ void MissionManager::setMission(CNSocket* sock, CNPacketData* data) {
 
     Player* plr = PlayerManager::getPlayer(sock);
 
-    if (plr == nullptr)
-        return;
-
     sP_CL2FE_REQ_PC_SET_CURRENT_MISSION_ID* missionData = (sP_CL2FE_REQ_PC_SET_CURRENT_MISSION_ID*)data->buf;
     INITSTRUCT(sP_FE2CL_REP_PC_SET_CURRENT_MISSION_ID, response);
     response.iCurrentMissionID = missionData->iCurrentMissionID;
@@ -229,7 +220,7 @@ void MissionManager::quitMission(CNSocket* sock, CNPacketData* data) {
 void MissionManager::quitTask(CNSocket* sock, int32_t taskNum, bool manual) {
     Player* plr = PlayerManager::getPlayer(sock);
 
-    if (plr == nullptr || Tasks.find(taskNum) == Tasks.end())
+    if (Tasks.find(taskNum) == Tasks.end())
         return; // sanity check
 
     // update player
@@ -300,9 +291,6 @@ void MissionManager::dropQuestItem(CNSocket *sock, int task, int count, int id, 
 
     Player *plr = PlayerManager::getPlayer(sock);
 
-    if (plr == nullptr)
-        return;
-
     uint8_t respbuf[resplen]; // not a variable length array, don't worry
     sP_FE2CL_REP_REWARD_ITEM *reward = (sP_FE2CL_REP_REWARD_ITEM *)respbuf;
     sItemReward *item = (sItemReward *)(respbuf + sizeof(sP_FE2CL_REP_REWARD_ITEM));
@@ -353,9 +341,6 @@ void MissionManager::dropQuestItem(CNSocket *sock, int task, int count, int id, 
 int MissionManager::giveMissionReward(CNSocket *sock, int task) {
     Reward *reward = Rewards[task];
     Player *plr = PlayerManager::getPlayer(sock);
-
-    if (plr == nullptr)
-        return -1;
 
     int nrewards = 0;
     for (int i = 0; i < 4; i++) {
@@ -438,9 +423,6 @@ int MissionManager::giveMissionReward(CNSocket *sock, int task) {
 void MissionManager::updateFusionMatter(CNSocket* sock, int fusion) {
     Player *plr = PlayerManager::getPlayer(sock);
 
-    if (plr == nullptr)
-        return;
-
     plr->fusionmatter += fusion;
 
     // there's a much lower FM cap in the Future
@@ -470,13 +452,16 @@ void MissionManager::updateFusionMatter(CNSocket* sock, int fusion) {
     INITSTRUCT(sP_FE2CL_REP_PC_TASK_START_SUCC, response);
     response.iTaskNum = AvatarGrowth[plr->level]["m_iNanoQuestTaskID"];
     sock->sendPacket((void*)&response, P_FE2CL_REP_PC_TASK_START_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_START_SUCC));
+
+    // play the beam animation for other players
+    INITSTRUCT(sP_FE2CL_PC_EVENT, bcast);
+    bcast.iEventID = 1; // beam effect
+    bcast.iPC_ID = plr->iID;
+    PlayerManager::sendToViewable(sock, (void*)&bcast, P_FE2CL_PC_EVENT, sizeof(sP_FE2CL_PC_EVENT));
 }
 
 void MissionManager::mobKilled(CNSocket *sock, int mobid) {
     Player *plr = PlayerManager::getPlayer(sock);
-
-    if (plr == nullptr)
-        return;
 
     bool missionmob = false;
 
@@ -538,9 +523,6 @@ void MissionManager::saveMission(Player* player, int missionId) {
 
 bool MissionManager::isQuestItemFull(CNSocket* sock, int itemId, int itemCount) {
     Player* plr = PlayerManager::getPlayer(sock);
-
-    if (plr == nullptr)
-        return true;
 
     int slot = findQSlot(plr, itemId);
     if (slot == -1) {

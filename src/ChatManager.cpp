@@ -69,8 +69,6 @@ void levelCommand(std::string full, std::vector<std::string>& args, CNSocket* so
     }
 
     Player *plr = PlayerManager::getPlayer(sock);
-    if (plr == nullptr)
-        return;
 
     char *tmp;
     int level = std::strtol(args[1].c_str(), &tmp, 10);
@@ -210,7 +208,7 @@ void summonWCommand(std::string full, std::vector<std::string>& args, CNSocket* 
     }
 
     // permission & sanity check
-    if (plr == nullptr || type >= 3314)
+    if (type >= 3314)
         return;
 
     int team = NPCManager::NPCData[type]["m_iTeam"];
@@ -284,27 +282,29 @@ void unsummonWCommand(std::string full, std::vector<std::string>& args, CNSocket
         return;
     }
 
-    int leadId = ((Mob*)npc)->groupLeader;
-    if (leadId != 0) {
-        if (MobManager::Mobs.find(leadId) == MobManager::Mobs.end()) {
-            std::cout << "[WARN] unsummonW: leader not found!" << std::endl;
-        }
-        Mob* leadNpc = MobManager::Mobs[leadId];
-        for (int i = 0; i < 4; i++) {
-            if (leadNpc->groupMember[i] == 0)
-                break;
-
-            if (MobManager::Mobs.find(leadNpc->groupMember[i]) == MobManager::Mobs.end()) {
-                std::cout << "[WARN] unsommonW: leader can't find a group member!" << std::endl;
-                continue;
+    if (MobManager::Mobs.find(npc->appearanceData.iNPC_ID) != MobManager::Mobs.end()) {
+        int leadId = ((Mob*)npc)->groupLeader;
+        if (leadId != 0) {
+            if (MobManager::Mobs.find(leadId) == MobManager::Mobs.end()) {
+                std::cout << "[WARN] unsummonW: leader not found!" << std::endl;
             }
+            Mob* leadNpc = MobManager::Mobs[leadId];
+            for (int i = 0; i < 4; i++) {
+                if (leadNpc->groupMember[i] == 0)
+                    break;
 
-            NPCManager::destroyNPC(leadNpc->groupMember[i]);
+                if (MobManager::Mobs.find(leadNpc->groupMember[i]) == MobManager::Mobs.end()) {
+                    std::cout << "[WARN] unsommonW: leader can't find a group member!" << std::endl;
+                    continue;
+                }
+
+                NPCManager::destroyNPC(leadNpc->groupMember[i]);
+            }
+            TableData::RunningGroups.erase(leadId);
+            NPCManager::destroyNPC(leadId);
+            ChatManager::sendServerMessage(sock, "/unsummonW: Mob group destroyed.");
+            return;
         }
-        TableData::RunningGroups.erase(leadId);
-        NPCManager::destroyNPC(leadId);
-        ChatManager::sendServerMessage(sock, "/unsummonW: Mob group destroyed.");
-        return;
     }
 
     ChatManager::sendServerMessage(sock, "/unsummonW: removed mob with type: " + std::to_string(npc->appearanceData.iNPCType) +
@@ -446,6 +446,9 @@ void minfoCommand(std::string full, std::vector<std::string>& args, CNSocket* so
                 ChatManager::sendServerMessage(sock, "[MINFO] Current waypoint NPC ID: " + std::to_string((int)(task["m_iSTGrantWayPoint"])));
                 ChatManager::sendServerMessage(sock, "[MINFO] Current terminator NPC ID: " + std::to_string((int)(task["m_iHTerminatorNPCID"])));
 
+                if ((int)(task["m_iSTGrantTimer"]) != 0)
+                    ChatManager::sendServerMessage(sock, "[MINFO] Current task timer: " + std::to_string((int)(task["m_iSTGrantTimer"])));
+
                 for (int j = 0; j < 3; j++)
                     if ((int)(task["m_iCSUEnemyID"][j]) != 0)
                         ChatManager::sendServerMessage(sock, "[MINFO] Current task mob #" + std::to_string(j+1) +": " + std::to_string((int)(task["m_iCSUEnemyID"][j])));
@@ -508,9 +511,6 @@ void eggCommand(std::string full, std::vector<std::string>& args, CNSocket* sock
     int id = NPCManager::nextId++;
 
     Player* plr = PlayerManager::getPlayer(sock);
-
-    if (plr == nullptr)
-        return;
 
     // some math to place egg nicely in front of the player
     // temporarly disabled for sake of gruntwork
@@ -699,6 +699,52 @@ void whoisCommand(std::string full, std::vector<std::string>& args, CNSocket* so
     ChatManager::sendServerMessage(sock, "[WHOIS] Instance: " + std::to_string(PLAYERID(npc->instanceID)));
 }
 
+void lairUnlock(std::string full, std::vector<std::string>& args, CNSocket* sock) {
+    Player* plr = PlayerManager::getPlayer(sock);
+    if (!ChunkManager::chunkExists(plr->chunkPos))
+        return;
+
+    Chunk* chnk = ChunkManager::chunks[plr->chunkPos];
+    int taskID = -1;
+    int missionID = -1;
+    int found = 0;
+    for (int32_t id : chnk->NPCs) {
+        if (NPCManager::NPCs.find(id) == NPCManager::NPCs.end())
+            continue;
+
+        BaseNPC* npc = NPCManager::NPCs[id];
+        for (auto it = NPCManager::Warps.begin(); it != NPCManager::Warps.end(); it++) {
+            if ((*it).second.npcID == npc->appearanceData.iNPCType) {
+                taskID = (*it).second.limitTaskID;
+                missionID = MissionManager::Tasks[taskID]->task["m_iHMissionID"];
+                found++;
+                break;
+            }
+        }
+    }
+
+    if (missionID == -1 || taskID == -1) {
+        ChatManager::sendServerMessage(sock, "You are NOT standing near a lair portal; move around and try again!");
+        return;
+    }
+
+    if (found > 1) {
+        ChatManager::sendServerMessage(sock, "More than one lair found; decrease chunk size and try again!");
+        return;
+    }
+
+    INITSTRUCT(sP_FE2CL_REP_PC_TASK_START_SUCC, taskResp);
+    MissionManager::startTask(plr, taskID, false);
+    taskResp.iTaskNum = taskID;
+    taskResp.iRemainTime = 0;
+    sock->sendPacket((void*)&taskResp, P_FE2CL_REP_PC_TASK_START_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_START_SUCC));
+
+    INITSTRUCT(sP_FE2CL_REP_PC_SET_CURRENT_MISSION_ID, missionResp);
+    missionResp.iCurrentMissionID = missionID;
+    plr->CurrentMissionID = missionID;
+    sock->sendPacket((void*)&missionResp, P_FE2CL_REP_PC_SET_CURRENT_MISSION_ID, sizeof(sP_FE2CL_REP_PC_SET_CURRENT_MISSION_ID));
+}
+
 void ChatManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_SEND_FREECHAT_MESSAGE, chatHandler);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_AVATAR_EMOTES_CHAT, emoteHandler);
@@ -727,6 +773,7 @@ void ChatManager::init() {
     registerCommand("summonGroup", 30, summonGroupCommand, "summon group NPCs");
     registerCommand("summonGroupW", 30, summonGroupCommand, "permanently summon group NPCs");
     registerCommand("whois", 50, whoisCommand, "describe nearest NPC");
+    registerCommand("lair", 50, lairUnlock, "Allows entry to lair by granting you the required mission and task");
 }
 
 void ChatManager::registerCommand(std::string cmd, int requiredLevel, CommandHandler handlr, std::string help) {
@@ -833,12 +880,12 @@ void ChatManager::announcementHandler(CNSocket* sock, CNPacketData* data) {
 
     switch (announcement->iAreaType) {
     case 0: // area (all players in viewable chunks)
+        sock->sendPacket((void*)&msg, P_FE2CL_GM_REP_PC_ANNOUNCE, sizeof(sP_FE2CL_GM_REP_PC_ANNOUNCE));
         PlayerManager::sendToViewable(sock, (void*)&msg, P_FE2CL_GM_REP_PC_ANNOUNCE, sizeof(sP_FE2CL_GM_REP_PC_ANNOUNCE));
         break;
     case 1: // shard
-        break; //stubbed for now
     case 2: // world
-        break; // stubbed for now
+        break; // not applicable to OpenFusion
     case 3: // global (all players)
         for (it = PlayerManager::players.begin(); it != PlayerManager::players.end(); it++) {
             CNSocket* allSock = it->first;

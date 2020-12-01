@@ -43,9 +43,6 @@ void MobManager::pcAttackNpcs(CNSocket *sock, CNPacketData *data) {
     sP_CL2FE_REQ_PC_ATTACK_NPCs* pkt = (sP_CL2FE_REQ_PC_ATTACK_NPCs*)data->buf;
     Player *plr = PlayerManager::getPlayer(sock);
 
-    if (plr == nullptr)
-        return;
-
     // sanity check
     if (!validInVarPacket(sizeof(sP_CL2FE_REQ_PC_ATTACK_NPCs), pkt->iNPCCnt, sizeof(int32_t), data->size)) {
         std::cout << "[WARN] bad sP_CL2FE_REQ_PC_ATTACK_NPCs packet size\n";
@@ -122,9 +119,6 @@ void MobManager::pcAttackNpcs(CNSocket *sock, CNPacketData *data) {
 void MobManager::npcAttackPc(Mob *mob, time_t currTime) {
     Player *plr = PlayerManager::getPlayer(mob->target);
 
-    if (plr == nullptr)
-        return;
-
     const size_t resplen = sizeof(sP_FE2CL_PC_ATTACK_NPCs_SUCC) + sizeof(sAttackResult);
     assert(resplen < CN_PACKET_BUFFER_SIZE - 8);
     uint8_t respbuf[CN_PACKET_BUFFER_SIZE];
@@ -134,7 +128,9 @@ void MobManager::npcAttackPc(Mob *mob, time_t currTime) {
     sAttackResult *atk = (sAttackResult*)(respbuf + sizeof(sP_FE2CL_NPC_ATTACK_PCs));
 
     auto damage = getDamage(450 + (int)mob->data["m_iPower"], plr->defense, false, false, -1, -1, 0);
-    plr->HP -= damage.first;
+
+    if (!(plr->iSpecialState & CN_SPECIAL_STATE_FLAG__INVULNERABLE))
+        plr->HP -= damage.first;
 
     pkt->iNPC_ID = mob->appearanceData.iNPC_ID;
     pkt->iPCCnt = 1;
@@ -157,9 +153,6 @@ void MobManager::npcAttackPc(Mob *mob, time_t currTime) {
 
 void MobManager::giveReward(CNSocket *sock, Mob* mob) {
     Player *plr = PlayerManager::getPlayer(sock);
-
-    if (plr == nullptr)
-        return;
 
     const size_t resplen = sizeof(sP_FE2CL_REP_REWARD_ITEM) + sizeof(sItemReward);
     assert(resplen < CN_PACKET_BUFFER_SIZE - 8);
@@ -391,20 +384,17 @@ void MobManager::killMob(CNSocket *sock, Mob *mob) {
     if (sock != nullptr) {
         Player* plr = PlayerManager::getPlayer(sock);
 
-        if (plr == nullptr)
-            return;
-
         if (plr->groupCnt == 1 && plr->iIDGroup == plr->iID) {
             giveReward(sock, mob);
             MissionManager::mobKilled(sock, mob->appearanceData.iNPCType);
         } else {
-            plr = PlayerManager::getPlayerFromID(plr->iIDGroup);
+            Player* otherPlayer = PlayerManager::getPlayerFromID(plr->iIDGroup);
 
-            if (plr == nullptr)
+            if (otherPlayer == nullptr)
                 return;
 
-            for (int i = 0; i < plr->groupCnt; i++) {
-                CNSocket* sockTo = PlayerManager::getSockFromID(plr->groupIDs[i]);
+            for (int i = 0; i < otherPlayer->groupCnt; i++) {
+                CNSocket* sockTo = PlayerManager::getSockFromID(otherPlayer->groupIDs[i]);
                 giveReward(sockTo, mob);
                 MissionManager::mobKilled(sockTo, mob->appearanceData.iNPCType);
             }
@@ -498,22 +488,12 @@ void MobManager::deadStep(Mob *mob, time_t currTime) {
 void MobManager::combatStep(Mob *mob, time_t currTime) {
     assert(mob->target != nullptr);
 
-    // sanity check: did the target player lose connection?
-    if (PlayerManager::players.find(mob->target) == PlayerManager::players.end()) {
-        mob->target = nullptr;
-        mob->state = MobState::RETREAT;
-        if (!aggroCheck(mob, currTime))
-            clearDebuff(mob);
-        return;
-    }
-
     Player *plr = PlayerManager::getPlayer(mob->target);
 
-    if (plr == nullptr)
-        return;
-
-    // did something else kill the player in the mean time?
-    if (plr->HP <= 0) {
+    // Lose aggro if the player lost connection, became invulnerable or died
+    if (plr->HP <= 0
+     || PlayerManager::players.find(mob->target) == PlayerManager::players.end()
+     || (plr->iSpecialState & CN_SPECIAL_STATE_FLAG__INVULNERABLE)) {
         mob->target = nullptr;
         mob->state = MobState::RETREAT;
         if (!aggroCheck(mob, currTime))
@@ -522,7 +502,8 @@ void MobManager::combatStep(Mob *mob, time_t currTime) {
     }
 
     // drain
-    if ((mob->lastDrainTime == 0 || currTime - mob->lastDrainTime >= 1000) && mob->appearanceData.iConditionBitFlag & CSB_BIT_BOUNDINGBALL) {
+    if (mob->skillStyle < 0 && (mob->lastDrainTime == 0 || currTime - mob->lastDrainTime >= 1000)
+        && mob->appearanceData.iConditionBitFlag & CSB_BIT_BOUNDINGBALL) {
         drainMobHP(mob, mob->maxHealth / 20); // lose 5% every second
         mob->lastDrainTime = currTime;
     }
@@ -558,7 +539,7 @@ void MobManager::combatStep(Mob *mob, time_t currTime) {
     int mobRange = (int)mob->data["m_iAtkRange"] + (int)mob->data["m_iRadius"];
 
     if (currTime >= mob->nextAttack) {
-        if (mob->skillStyle != -1 || distance <= mobRange || rand() % 10 == 0) // while not in attack range, 1 / 10 chance.
+        if (mob->skillStyle != -1 || distance <= mobRange || rand() % 20 == 0) // while not in attack range, 1 / 20 chance.
             useAbilities(mob, currTime);
         if (mob->target == nullptr)
             return;
@@ -590,8 +571,8 @@ void MobManager::combatStep(Mob *mob, time_t currTime) {
         if (mob->appearanceData.iConditionBitFlag & CSB_BIT_DN_MOVE_SPEED)
             speed /= 2;
 
-        int targetX = mob->target->plr->x;
-        int targetY = mob->target->plr->y;
+        int targetX = plr->x;
+        int targetY = plr->y;
         if (mob->groupLeader != 0) {
             targetX += mob->offsetX*distance/(mob->idleRange + 1);
             targetY += mob->offsetY*distance/(mob->idleRange + 1);
@@ -607,7 +588,7 @@ void MobManager::combatStep(Mob *mob, time_t currTime) {
         pkt.iSpeed = speed;
         pkt.iToX = mob->appearanceData.iX = targ.first;
         pkt.iToY = mob->appearanceData.iY = targ.second;
-        pkt.iToZ = mob->target->plr->z;
+        pkt.iToZ = plr->z;
         pkt.iMoveStyle = 1;
 
         // notify all nearby players
@@ -833,11 +814,6 @@ std::pair<int,int> MobManager::lerp(int x1, int y1, int x2, int y2, int speed) {
 void MobManager::combatBegin(CNSocket *sock, CNPacketData *data) {
     Player *plr = PlayerManager::getPlayer(sock);
 
-    if (plr == nullptr) {
-        std::cout << "[WARN] combatBegin: null player!" << std::endl;
-        return;
-    }
-
     plr->inCombat = true;
 
     // HACK: make sure the player has the right weapon out for combat
@@ -863,11 +839,6 @@ void MobManager::dotDamageOnOff(CNSocket *sock, CNPacketData *data) {
     sP_CL2FE_DOT_DAMAGE_ONOFF *pkt = (sP_CL2FE_DOT_DAMAGE_ONOFF*)data->buf;
     Player *plr = PlayerManager::getPlayer(sock);
 
-    if (plr == nullptr) {
-        std::cout << "[WARN] dotDamageOnOff: null player!" << std::endl;
-        return;
-    }
-
     if ((plr->iConditionBitFlag & CSB_BIT_INFECTION) != (bool)pkt->iFlag)
         plr->iConditionBitFlag ^= CSB_BIT_INFECTION;
 
@@ -887,13 +858,13 @@ void MobManager::dealGooDamage(CNSocket *sock, int amount) {
     uint8_t respbuf[CN_PACKET_BUFFER_SIZE];
     Player *plr = PlayerManager::getPlayer(sock);
 
-    if (plr == nullptr)
-        return;
-
     memset(respbuf, 0, resplen);
 
     sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK *pkt = (sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK*)respbuf;
     sSkillResult_DotDamage *dmg = (sSkillResult_DotDamage*)(respbuf + sizeof(sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK));
+
+    if (!(plr->iSpecialState & CN_SPECIAL_STATE_FLAG__INVULNERABLE))
+        amount = 0;
 
     if (plr->iConditionBitFlag & CSB_BIT_PROTECT_INFECTION) {
         amount = -2; // -2 is the magic number for "Protected" to appear as the damage number
@@ -912,7 +883,7 @@ void MobManager::dealGooDamage(CNSocket *sock, int amount) {
         if (plr->Nanos[plr->activeNano].iStamina <= 0) {
             dmg->bNanoDeactive = 1;
             plr->Nanos[plr->activeNano].iStamina = 0;
-            NanoManager::summonNano(PlayerManager::getSockFromID(plr->iID), -1);
+            NanoManager::summonNano(PlayerManager::getSockFromID(plr->iID), -1, true);
         }
     }
 
@@ -963,23 +934,10 @@ void MobManager::playerTick(CNServer *serv, time_t currTime) {
 
         for (int i = 0; i < 3; i++) {
             if (plr->activeNano != 0 && plr->equippedNanos[i] == plr->activeNano) { // spend stamina
-                plr->Nanos[plr->activeNano].iStamina -= 1 + plr->nanoDrainRate * 2 / 5;
+                plr->Nanos[plr->activeNano].iStamina -= 1 + plr->nanoDrainRate / 5;
 
-                if (plr->Nanos[plr->activeNano].iStamina <= 0) {
-                    // passive nano unbuffing
-                    int skillID = plr->Nanos[plr->activeNano].iSkillID;
-                    if (NanoManager::SkillTable[skillID].drainType == 2) {
-                        std::vector<int> targetData = NanoManager::findTargets(plr, skillID);
-
-                        for (auto& pwr : NanoManager::NanoPowers)
-                            if (pwr.skillType == NanoManager::SkillTable[skillID].skillType)
-                                NanoManager::nanoUnbuff(sock, targetData, pwr.bitFlag, pwr.timeBuffID, 0, (NanoManager::SkillTable[skillID].targetType == 3));
-                    }
-
-                    plr->Nanos[plr->activeNano].iStamina = 0;
-                    plr->activeNano = 0;
-                    plr->nanoDrainRate = 0;
-                }
+                if (plr->Nanos[plr->activeNano].iStamina <= 0)
+                    NanoManager::summonNano(sock, -1, true); // unsummon nano silently
 
                 transmit = true;
             } else if (plr->Nanos[plr->equippedNanos[i]].iStamina < 150) { // regain stamina
@@ -1054,9 +1012,6 @@ std::pair<int,int> MobManager::getDamage(int attackPower, int defensePower, bool
 void MobManager::pcAttackChars(CNSocket *sock, CNPacketData *data) {
     sP_CL2FE_REQ_PC_ATTACK_CHARs* pkt = (sP_CL2FE_REQ_PC_ATTACK_CHARs*)data->buf;
     Player *plr = PlayerManager::getPlayer(sock);
-
-    if (plr == nullptr)
-        return;
 
     // Unlike the attack mob packet, attacking players packet has an 8-byte trail (Instead of 4 bytes).
     if (!validInVarPacket(sizeof(sP_CL2FE_REQ_PC_ATTACK_CHARs), pkt->iTargetCnt, sizeof(int32_t) * 2, data->size)) {
@@ -1204,7 +1159,7 @@ bool MobManager::aggroCheck(Mob *mob, time_t currTime) {
     for (auto it = mob->viewableChunks->begin(); it != mob->viewableChunks->end(); it++) {
         Chunk* chunk = *it;
         for (CNSocket *s : chunk->players) {
-            Player *plr = s->plr;
+            Player *plr = PlayerManager::getPlayer(s);
 
             if (plr->HP <= 0)
                 continue;
@@ -1214,7 +1169,7 @@ bool MobManager::aggroCheck(Mob *mob, time_t currTime) {
             if (plr->iConditionBitFlag & CSB_BIT_UP_STEALTH)
                 mobRange /= 3;
 
-            if (plr->iSpecialState & CN_SPECIAL_STATE_FLAG__INVISIBLE)
+            if (plr->iSpecialState & (CN_SPECIAL_STATE_FLAG__INVISIBLE|CN_SPECIAL_STATE_FLAG__INVULNERABLE))
                 mobRange = -1;
 
             // height is relevant for aggro distance because of platforming
@@ -1357,9 +1312,6 @@ void MobManager::projectileHit(CNSocket* sock, CNPacketData* data) {
     sP_CL2FE_REQ_PC_ROCKET_STYLE_HIT* pkt = (sP_CL2FE_REQ_PC_ROCKET_STYLE_HIT*)data->buf;
     Player* plr = PlayerManager::getPlayer(sock);
 
-    if (plr == nullptr)
-        return;
-
     if (pkt->iTargetCnt == 0) {
         Bullets[plr->iID].erase(pkt->iBulletID);
         // no targets hit, don't send response
@@ -1475,9 +1427,11 @@ void MobManager::followToCombat(Mob *mob) {
 }
 
 void MobManager::useAbilities(Mob *mob, time_t currTime) {
+    Player *plr = PlayerManager::getPlayer(mob->target);
+
     if (mob->skillStyle >= 0) { // corruption hit
         int skillID = (int)mob->data["m_iCorruptionType"];
-        std::vector<int> targetData = {1, mob->target->plr->iID, 0, 0, 0};
+        std::vector<int> targetData = {1, plr->iID, 0, 0, 0};
         int temp = mob->skillStyle;
         mob->skillStyle = -3; // corruption cooldown
         mob->nextAttack = currTime + 1000;
@@ -1493,7 +1447,7 @@ void MobManager::useAbilities(Mob *mob, time_t currTime) {
         for (auto it = mob->viewableChunks->begin(); it != mob->viewableChunks->end(); it++) {
             Chunk* chunk = *it;
             for (CNSocket *s : chunk->players) {
-                Player *plr = s->plr;
+                Player *plr = PlayerManager::getPlayer(s);
 
                 if (plr->HP <= 0)
                     continue;
@@ -1521,14 +1475,14 @@ void MobManager::useAbilities(Mob *mob, time_t currTime) {
         return;
     }
 
-    int random = rand() % 100 * 10000;
+    int random = rand() % 100 * 15000;
     int prob1 = (int)mob->data["m_iActiveSkill1Prob"]; // active skill probability
     int prob2 = (int)mob->data["m_iCorruptionTypeProb"]; // corruption probability
     int prob3 = (int)mob->data["m_iMegaTypeProb"]; // eruption probability
 
     if (random < prob1) { // active skill hit
         int skillID = (int)mob->data["m_iActiveSkill1"];
-        std::vector<int> targetData = {1, mob->target->plr->iID, 0, 0, 0};
+        std::vector<int> targetData = {1, plr->iID, 0, 0, 0};
         for (auto& pwr : MobPowers)
             if (pwr.skillType == NanoManager::SkillTable[skillID].skillType)
                 pwr.handle(mob, targetData, skillID, NanoManager::SkillTable[skillID].durationTime[0], NanoManager::SkillTable[skillID].powerIntensity[0]);
@@ -1541,10 +1495,10 @@ void MobManager::useAbilities(Mob *mob, time_t currTime) {
         INITSTRUCT(sP_FE2CL_NPC_SKILL_CORRUPTION_READY, pkt);
         pkt.iNPC_ID = mob->appearanceData.iNPC_ID;
         pkt.iSkillID = skillID;
-        pkt.iValue1 = mob->target->plr->x;
-        pkt.iValue2 = mob->target->plr->y;
-        pkt.iValue3 = mob->target->plr->z;
-        mob->skillStyle = NanoManager::nanoStyle(mob->target->plr->activeNano) - 1;
+        pkt.iValue1 = plr->x;
+        pkt.iValue2 = plr->y;
+        pkt.iValue3 = plr->z;
+        mob->skillStyle = NanoManager::nanoStyle(plr->activeNano) - 1;
         if (mob->skillStyle == -1)
             mob->skillStyle = 2;
         if (mob->skillStyle == -2)
@@ -1560,9 +1514,9 @@ void MobManager::useAbilities(Mob *mob, time_t currTime) {
         INITSTRUCT(sP_FE2CL_NPC_SKILL_READY, pkt);
         pkt.iNPC_ID = mob->appearanceData.iNPC_ID;
         pkt.iSkillID = skillID;
-        pkt.iValue1 = mob->hitX = mob->target->plr->x;
-        pkt.iValue2 = mob->hitY = mob->target->plr->y;
-        pkt.iValue3 = mob->hitZ = mob->target->plr->z;
+        pkt.iValue1 = mob->hitX = plr->x;
+        pkt.iValue2 = mob->hitY = plr->y;
+        pkt.iValue3 = mob->hitZ = plr->z;
         NPCManager::sendToViewable(mob, &pkt, P_FE2CL_NPC_SKILL_READY, sizeof(sP_FE2CL_NPC_SKILL_READY));
         mob->nextAttack = currTime + 2500;
         mob->skillStyle = -2;
@@ -1573,6 +1527,8 @@ void MobManager::useAbilities(Mob *mob, time_t currTime) {
 }
 
 void MobManager::dealCorruption(Mob *mob, std::vector<int> targetData, int skillID, int style) {
+    Player *plr = PlayerManager::getPlayer(mob->target);
+
     size_t resplen = sizeof(sP_FE2CL_NPC_SKILL_CORRUPTION_HIT) + targetData[0] * sizeof(sCAttackResult);
 
     // validate response packet
@@ -1590,9 +1546,9 @@ void MobManager::dealCorruption(Mob *mob, std::vector<int> targetData, int skill
     resp->iNPC_ID = mob->appearanceData.iNPC_ID;
     resp->iSkillID = skillID;
     resp->iStyle = style;
-    resp->iValue1 = mob->target->plr->x;
-    resp->iValue2 = mob->target->plr->y;
-    resp->iValue3 = mob->target->plr->z;
+    resp->iValue1 = plr->x;
+    resp->iValue2 = plr->y;
+    resp->iValue3 = plr->z;
     resp->iTargetCnt = targetData[0];
 
     for (int i = 0; i < targetData[0]; i++) {
@@ -1647,12 +1603,15 @@ void MobManager::dealCorruption(Mob *mob, std::vector<int> targetData, int skill
             respdata[i].iDamage = NanoManager::SkillTable[skillID].powerIntensity[0] * PC_MAXHEALTH((int)mob->data["m_iNpcLevel"]) / 1500;
             respdata[i].iNanoStamina = plr->Nanos[plr->activeNano].iStamina -= 90;
             if (plr->Nanos[plr->activeNano].iStamina < 0) {
+                respdata[i].bNanoDeactive = 1;
                 respdata[i].iNanoStamina = plr->Nanos[plr->activeNano].iStamina = 0;
-                NanoManager::summonNano(sock, -1); // unsummon when stamina is 0
             }
         }
 
-        respdata[i].iHP = plr->HP-= respdata[i].iDamage;
+        if (!(plr->iSpecialState & CN_SPECIAL_STATE_FLAG__INVULNERABLE))
+            plr->HP -= respdata[i].iDamage;
+
+        respdata[i].iHP = plr->HP;
         respdata[i].iConditionBitFlag = plr->iConditionBitFlag;
 
         if (plr->HP <= 0) {
@@ -1687,6 +1646,9 @@ bool doDamageNDebuff(Mob *mob, sSkillResult_Damage_N_Debuff *respdata, int i, in
     }
 
     int damage = duration;
+
+    if (plr->iSpecialState & CN_SPECIAL_STATE_FLAG__INVULNERABLE)
+        damage = 0;
 
     respdata[i].eCT = 1;
     respdata[i].iDamage = damage;
@@ -1754,6 +1716,9 @@ bool doDamage(Mob *mob, sSkillResult_Damage *respdata, int i, int32_t targetID, 
 
     int damage = amount * PC_MAXHEALTH((int)mob->data["m_iNpcLevel"]) / 1500;
 
+    if (plr->iSpecialState & CN_SPECIAL_STATE_FLAG__INVULNERABLE)
+        damage = 0;
+
     respdata[i].eCT = 1;
     respdata[i].iDamage = damage;
     respdata[i].iID = plr->iID;
@@ -1804,6 +1769,9 @@ bool doLeech(Mob *mob, sSkillResult_Heal_HP *healdata, int i, int32_t targetID, 
     }
 
     int damage = amount * PC_MAXHEALTH(plr->level) / 1000;
+
+    if (plr->iSpecialState & CN_SPECIAL_STATE_FLAG__INVULNERABLE)
+        damage = 0;
 
     damagedata->eCT = 1;
     damagedata->iDamage = damage;

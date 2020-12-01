@@ -33,7 +33,7 @@ void NanoManager::nanoEquipHandler(CNSocket* sock, CNPacketData* data) {
     Player *plr = PlayerManager::getPlayer(sock);
 
     // sanity checks
-    if (plr == nullptr || nano->iNanoSlotNum > 2 || nano->iNanoSlotNum < 0)
+    if (nano->iNanoSlotNum > 2 || nano->iNanoSlotNum < 0)
         return;
 
     resp.iNanoID = nano->iNanoID;
@@ -70,7 +70,7 @@ void NanoManager::nanoUnEquipHandler(CNSocket* sock, CNPacketData* data) {
     Player *plr = PlayerManager::getPlayer(sock);
 
     // sanity check
-    if (plr == nullptr || nano->iNanoSlotNum > 2 || nano->iNanoSlotNum < 0)
+    if (nano->iNanoSlotNum > 2 || nano->iNanoSlotNum < 0)
         return;
 
     resp.iNanoSlotNum = nano->iNanoSlotNum;
@@ -93,9 +93,6 @@ void NanoManager::nanoGMGiveHandler(CNSocket* sock, CNPacketData* data) {
     sP_CL2FE_REQ_PC_GIVE_NANO* nano = (sP_CL2FE_REQ_PC_GIVE_NANO*)data->buf;
     Player *plr = PlayerManager::getPlayer(sock);
 
-    if (plr == nullptr)
-        return;
-
     // Add nano to player
     addNano(sock, nano->iNanoID, 0);
 
@@ -111,9 +108,6 @@ void NanoManager::nanoSummonHandler(CNSocket* sock, CNPacketData* data) {
     sP_CL2FE_REQ_NANO_ACTIVE* pkt = (sP_CL2FE_REQ_NANO_ACTIVE*)data->buf;
     Player *plr = PlayerManager::getPlayer(sock);
 
-    if (plr == nullptr)
-        return;
-
     summonNano(sock, pkt->iNanoSlotNum);
 
     // Send to client
@@ -124,9 +118,6 @@ void NanoManager::nanoSummonHandler(CNSocket* sock, CNPacketData* data) {
 
 void NanoManager::nanoSkillUseHandler(CNSocket* sock, CNPacketData* data) {
     Player *plr = PlayerManager::getPlayer(sock);
-
-    if (plr == nullptr)
-        return;
 
     int16_t nanoID = plr->activeNano;
     int16_t skillID = plr->Nanos[nanoID].iSkillID;
@@ -142,15 +133,15 @@ void NanoManager::nanoSkillUseHandler(CNSocket* sock, CNPacketData* data) {
         boost = 1;
 
     plr->Nanos[plr->activeNano].iStamina -= SkillTable[skillID].batteryUse[boost*3];
-    if (plr->Nanos[plr->activeNano].iStamina < 0) {
+    if (plr->Nanos[plr->activeNano].iStamina < 0)
         plr->Nanos[plr->activeNano].iStamina = 0;
-        plr->activeNano = 0;
-        plr->nanoDrainRate = 0;
-    }
 
     for (auto& pwr : NanoPowers)
         if (pwr.skillType == SkillTable[skillID].skillType)
             pwr.handle(sock, targetData, nanoID, skillID, SkillTable[skillID].durationTime[boost], SkillTable[skillID].powerIntensity[boost]);
+
+    if (plr->Nanos[plr->activeNano].iStamina < 0)
+        summonNano(sock, -1);
 }
 
 void NanoManager::nanoSkillSetHandler(CNSocket* sock, CNPacketData* data) {
@@ -214,7 +205,7 @@ void NanoManager::nanoPotionHandler(CNSocket* sock, CNPacketData* data) {
     Player* player = PlayerManager::getPlayer(sock);
 
     // sanity checks
-    if (player == nullptr || player->activeNano == -1 || player->batteryN == 0)
+    if (player->activeNano == -1 || player->batteryN == 0)
         return;
 
     sNano nano = player->Nanos[player->activeNano];
@@ -243,9 +234,6 @@ void NanoManager::addNano(CNSocket* sock, int16_t nanoID, int16_t slot, bool spe
         return;
 
     Player *plr = PlayerManager::getPlayer(sock);
-
-    if (plr == nullptr)
-        return;
 
     int level = nanoID < plr->level ? plr->level : nanoID;
 
@@ -291,12 +279,12 @@ void NanoManager::addNano(CNSocket* sock, int16_t nanoID, int16_t slot, bool spe
     PlayerManager::sendToViewable(sock, (void*)&resp2, P_FE2CL_REP_PC_CHANGE_LEVEL, sizeof(sP_FE2CL_REP_PC_CHANGE_LEVEL));
 }
 
-void NanoManager::summonNano(CNSocket *sock, int slot) {
+void NanoManager::summonNano(CNSocket *sock, int slot, bool silent) {
     INITSTRUCT(sP_FE2CL_REP_NANO_ACTIVE_SUCC, resp);
     resp.iActiveNanoSlotNum = slot;
     Player *plr = PlayerManager::getPlayer(sock);
 
-    if (plr == nullptr || slot > 2 || slot < -1)
+    if (slot > 2 || slot < -1)
         return; // sanity check
 
     plr->nanoDrainRate = 0;
@@ -338,9 +326,10 @@ void NanoManager::summonNano(CNSocket *sock, int slot) {
         }
     }
 
-    sock->sendPacket((void*)&resp, P_FE2CL_REP_NANO_ACTIVE_SUCC, sizeof(sP_FE2CL_REP_NANO_ACTIVE_SUCC));
+    if (!silent) // silent nano death but only for the summoning player
+        sock->sendPacket((void*)&resp, P_FE2CL_REP_NANO_ACTIVE_SUCC, sizeof(sP_FE2CL_REP_NANO_ACTIVE_SUCC));
 
-    // Send to other players
+    // Send to other players, these players can't handle silent nano deaths so this packet needs to be sent.
     INITSTRUCT(sP_FE2CL_NANO_ACTIVE, pkt1);
     pkt1.iPC_ID = plr->iID;
     pkt1.Nano = plr->Nanos[nanoID];
@@ -352,9 +341,6 @@ void NanoManager::setNanoSkill(CNSocket* sock, sP_CL2FE_REQ_NANO_TUNE* skill) {
         return;
 
     Player *plr = PlayerManager::getPlayer(sock);
-
-    if (plr == nullptr)
-        return;
 
     if (plr->activeNano > 0 && plr->activeNano == skill->iNanoID)
         summonNano(sock, -1); // just unsummon the nano to prevent infinite buffs
@@ -427,9 +413,6 @@ void NanoManager::resetNanoSkill(CNSocket* sock, int16_t nanoID) {
 
     Player *plr = PlayerManager::getPlayer(sock);
 
-    if (plr == nullptr)
-        return;
-
     sNano nano = plr->Nanos[nanoID];
 
     // 0 is reset
@@ -439,9 +422,6 @@ void NanoManager::resetNanoSkill(CNSocket* sock, int16_t nanoID) {
 
 void NanoManager::nanoUnbuff(CNSocket* sock, std::vector<int> targetData, int32_t bitFlag, int16_t timeBuffID, int16_t amount, bool groupPower) {
     Player *plr = PlayerManager::getPlayer(sock);
-
-    if (plr == nullptr)
-        return;
 
     plr->iSelfConditionBitFlag &= ~bitFlag;
     int groupFlags = 0;
@@ -610,18 +590,23 @@ bool doBuff(CNSocket *sock, sSkillResult_Buff *respdata, int i, int32_t targetID
 
     respdata[i].eCT = 1;
     respdata[i].iID = plr->iID;
-    respdata[i].iConditionBitFlag = bitFlag;
+    respdata[i].iConditionBitFlag = 0;
 
-    INITSTRUCT(sP_FE2CL_PC_BUFF_UPDATE, pkt);
-    pkt.eCSTB = timeBuffID; // eCharStatusTimeBuffID
-    pkt.eTBU = 1; // eTimeBuffUpdate
-    pkt.eTBT = 1; // eTimeBuffType 1 means nano
-    pkt.iConditionBitFlag = plr->iConditionBitFlag |= bitFlag;
+    // only apply buffs if the player is actually alive
+    if (plr->HP > 0) {
+        respdata[i].iConditionBitFlag = bitFlag;
 
-    if (amount > 0)
-        pkt.TimeBuff.iValue = amount;
+        INITSTRUCT(sP_FE2CL_PC_BUFF_UPDATE, pkt);
+        pkt.eCSTB = timeBuffID; // eCharStatusTimeBuffID
+        pkt.eTBU = 1; // eTimeBuffUpdate
+        pkt.eTBT = 1; // eTimeBuffType 1 means nano
+        pkt.iConditionBitFlag = plr->iConditionBitFlag |= bitFlag;
 
-    sock->sendPacket((void*)&pkt, P_FE2CL_PC_BUFF_UPDATE, sizeof(sP_FE2CL_PC_BUFF_UPDATE));
+        if (amount > 0)
+            pkt.TimeBuff.iValue = amount;
+
+        sock->sendPacket((void*)&pkt, P_FE2CL_PC_BUFF_UPDATE, sizeof(sP_FE2CL_PC_BUFF_UPDATE));
+    }
 
     return true;
 }
@@ -666,6 +651,10 @@ bool doHeal(CNSocket *sock, sSkillResult_Heal_HP *respdata, int i, int32_t targe
 
     int healedAmount = PC_MAXHEALTH(plr->level) * amount / 1500;
 
+    // do not heal dead players
+    if (plr->HP <= 0)
+        healedAmount = 0;
+
     plr->HP += healedAmount;
 
     if (plr->HP > PC_MAXHEALTH(plr->level))
@@ -690,9 +679,6 @@ bool doDamage(CNSocket *sock, sSkillResult_Damage *respdata, int i, int32_t targ
     Mob* mob = MobManager::Mobs[targetID];
 
     Player *plr = PlayerManager::getPlayer(sock);
-
-    if (plr == nullptr)
-        return false;
 
     int damage = MobManager::hitMob(sock, mob, PC_MAXHEALTH(plr->level) * amount / 2000 + mob->appearanceData.iHP * amount / 2000);
 
@@ -724,9 +710,6 @@ bool doLeech(CNSocket *sock, sSkillResult_Heal_HP *healdata, int i, int32_t targ
 
     sSkillResult_Damage *damagedata = (sSkillResult_Damage*)(((uint8_t*)healdata) + sizeof(sSkillResult_Heal_HP));
     Player *plr = PlayerManager::getPlayer(sock);
-
-    if (plr == nullptr)
-        return false;
 
     int healedAmount = amount;
 
@@ -798,12 +781,14 @@ bool doMove(CNSocket *sock, sSkillResult_Move *respdata, int i, int32_t targetID
         return false;
     }
 
+    Player *plr2 = PlayerManager::getPlayer(sock);
+
     respdata[i].eCT = 1;
     respdata[i].iID = plr->iID;
-    respdata[i].iMapNum = plr->recallInstance;
-    respdata[i].iMoveX = plr->recallX;
-    respdata[i].iMoveY = plr->recallY;
-    respdata[i].iMoveZ = plr->recallZ;
+    respdata[i].iMapNum = plr2->recallInstance;
+    respdata[i].iMoveX = plr2->recallX;
+    respdata[i].iMoveY = plr2->recallY;
+    respdata[i].iMoveZ = plr2->recallZ;
 
     return true;
 }
@@ -814,9 +799,6 @@ void nanoPower(CNSocket *sock, std::vector<int> targetData,
                 int16_t nanoID, int16_t skillID, int16_t duration, int16_t amount, 
                 int16_t skillType, int32_t bitFlag, int16_t timeBuffID) {
     Player *plr = PlayerManager::getPlayer(sock);
-
-    if (plr == nullptr)
-        return;
 
     if (skillType == EST_RETROROCKET_SELF || skillType == EST_RECALL) // rocket and self recall does not need any trailing structs
         targetData[0] = 0;
@@ -854,18 +836,19 @@ void nanoPower(CNSocket *sock, std::vector<int> targetData,
             plr->iGroupConditionBitFlag |= bitFlag;
     }
 
-    CNSocket *workSock = sock;
-
-    for (int i = 0; i < targetData[0]; i++) {
-        if (SkillTable[skillID].targetType == 3 && PlayerManager::getSockFromID(targetData[i + 1]) != nullptr)
-            workSock = PlayerManager::getSockFromID(targetData[i+1]);
-        if (!work(workSock, respdata, i, targetData[i+1], bitFlag, timeBuffID, duration, amount))
-            return; // TODO: Jade fix pls (name in popup is wrong)
-    }
+    for (int i = 0; i < targetData[0]; i++)
+        if (!work(sock, respdata, i, targetData[i+1], bitFlag, timeBuffID, duration, amount))
+            return;
 
     sock->sendPacket((void*)&respbuf, P_FE2CL_NANO_SKILL_USE_SUCC, resplen);
     assert(sizeof(sP_FE2CL_NANO_SKILL_USE_SUCC) == sizeof(sP_FE2CL_NANO_SKILL_USE));
-    PlayerManager::sendToViewable(sock, (void*)&respbuf, P_FE2CL_NANO_SKILL_USE, resplen);
+    if (skillType == EST_RECALL_GROUP) { // in the case of group recall, nobody but group members need the packet
+        for (int i = 0; i < targetData[0]; i++) {
+            CNSocket *sock2 = PlayerManager::getSockFromID(targetData[i+1]);
+            sock2->sendPacket((void*)&respbuf, P_FE2CL_NANO_SKILL_USE, resplen);
+        }
+    } else
+        PlayerManager::sendToViewable(sock, (void*)&respbuf, P_FE2CL_NANO_SKILL_USE, resplen);
 
     // Warping on recall
     if (skillType == EST_RECALL || skillType == EST_RECALL_GROUP) {
