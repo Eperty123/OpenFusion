@@ -488,11 +488,19 @@ void MobManager::deadStep(Mob *mob, time_t currTime) {
 void MobManager::combatStep(Mob *mob, time_t currTime) {
     assert(mob->target != nullptr);
 
+    // lose aggro if the player lost connection
+    if (PlayerManager::players.find(mob->target) == PlayerManager::players.end()) {
+        mob->target = nullptr;
+        mob->state = MobState::RETREAT;
+        if (!aggroCheck(mob, currTime))
+            clearDebuff(mob);
+        return;
+    }
+
     Player *plr = PlayerManager::getPlayer(mob->target);
 
-    // Lose aggro if the player lost connection, became invulnerable or died
+    // lose aggro if the player became invulnerable or died
     if (plr->HP <= 0
-     || PlayerManager::players.find(mob->target) == PlayerManager::players.end()
      || (plr->iSpecialState & CN_SPECIAL_STATE_FLAG__INVULNERABLE)) {
         mob->target = nullptr;
         mob->state = MobState::RETREAT;
@@ -1174,7 +1182,7 @@ bool MobManager::aggroCheck(Mob *mob, time_t currTime) {
 
             // height is relevant for aggro distance because of platforming
             int xyDistance = hypot(mob->appearanceData.iX - plr->x, mob->appearanceData.iY - plr->y);
-            int distance = hypot(xyDistance, mob->appearanceData.iZ - plr->z);
+            int distance = hypot(xyDistance, (mob->appearanceData.iZ - plr->z) * 2); // difference in Z counts twice
 
             if (distance > mobRange || distance > closestDistance)
                 continue;
