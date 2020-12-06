@@ -54,7 +54,7 @@ void TableData::init() {
     }
     catch (const std::exception& err) {
         std::cerr << "[FATAL] Malformed NPCs.json file! Reason:" << err.what() << std::endl;
-        terminate(0);
+        exit(1);
     }
 
     // load everything else from xdttable
@@ -121,18 +121,39 @@ void TableData::init() {
 
         std::cout << "[INFO] Loaded mission-related data" << std::endl;
 
-        // load all item data. i'm sorry. it has to be done
-        const char* setNames[12] = { "m_pBackItemTable", "m_pFaceItemTable", "m_pGlassItemTable", "m_pHatItemTable",
-        "m_pHeadItemTable", "m_pPantsItemTable", "m_pShirtsItemTable", "m_pShoesItemTable", "m_pWeaponItemTable",
-        "m_pVehicleItemTable", "m_pGeneralItemTable", "m_pChestItemTable" };
+        /*
+        * load all equipment data. i'm sorry. it has to be done
+        * NOTE: please don't change the ordering. it determines the types, since type and equipLoc are used inconsistently
+        */
+        const char* setNames[11] = { "m_pWeaponItemTable", "m_pShirtsItemTable", "m_pPantsItemTable", "m_pShoesItemTable",
+        "m_pHatItemTable", "m_pGlassItemTable", "m_pBackItemTable", "m_pGeneralItemTable", "",
+        "m_pChestItemTable", "m_pVehicleItemTable" };
         nlohmann::json itemSet;
-        for (int i = 0; i < 12; i++) {
+        for (int i = 0; i < 11; i++) {
+            if (i == 8)
+                continue; // there is no type 8, of course
+
             itemSet = xdtData[setNames[i]]["m_pItemData"];
             for (nlohmann::json::iterator _item = itemSet.begin(); _item != itemSet.end(); _item++) {
                 auto item = _item.value();
-                int typeOverride = getItemType(i); // used for special cases where iEquipLoc doesn't indicate item type
-                ItemManager::ItemData[std::pair<int32_t, int32_t>(item["m_iItemNumber"], typeOverride != -1 ? typeOverride : (int)item["m_iEquipLoc"])]
-                = { item["m_iTradeAble"] == 1, item["m_iSellAble"] == 1, item["m_iItemPrice"], item["m_iItemSellPrice"], item["m_iStackNumber"], i > 9 ? 0 : (int)item["m_iMinReqLev"], i > 9 ? 1 : (int)item["m_iRarity"], i > 9 ? 0 : (int)item["m_iPointRat"], i > 9 ? 0 : (int)item["m_iGroupRat"], i > 9 ? 0 : (int)item["m_iDefenseRat"], i > 9 ? 0 : (int)item["m_iReqSex"] };
+                int itemID = item["m_iItemNumber"];
+                INITSTRUCT(ItemManager::Item, itemData);
+                itemData.tradeable = item["m_iTradeAble"] == 1;
+                itemData.sellable = item["m_iSellAble"] == 1;
+                itemData.buyPrice = item["m_iItemPrice"];
+                itemData.sellPrice = item["m_iItemSellPrice"];
+                itemData.stackSize = item["m_iStackNumber"];
+                if (i != 7 && i != 9) {
+                    itemData.rarity = item["m_iRarity"];
+                    itemData.level = item["m_iMinReqLev"];
+                    itemData.pointDamage = item["m_iPointRat"];
+                    itemData.groupDamage = item["m_iGroupRat"];
+                    itemData.defense = item["m_iDefenseRat"];
+                    itemData.gender = item["m_iReqSex"];
+                } else {
+                    itemData.rarity = 1;
+                }
+                ItemManager::ItemData[std::make_pair(itemID, i)] = itemData;
             }
         }
 
@@ -209,7 +230,7 @@ void TableData::init() {
     }
     catch (const std::exception& err) {
         std::cerr << "[FATAL] Malformed xdt.json file! Reason:" << err.what() << std::endl;
-        terminate(0);
+        exit(1);
     }
 
     // load temporary mob dump
@@ -282,7 +303,7 @@ void TableData::init() {
     }
     catch (const std::exception& err) {
         std::cerr << "[FATAL] Malformed mobs.json file! Reason:" << err.what() << std::endl;
-        terminate(0);
+        exit(1);
     }
 
     loadDrops();
@@ -294,27 +315,6 @@ void TableData::init() {
     loadGruntwork(&nextId);
 
     NPCManager::nextId = nextId;
-}
-
-/*
- * Some item categories either don't possess iEquipLoc or use a different value for item type.
- */
-int TableData::getItemType(int itemSet) {
-    int overriden;
-    switch (itemSet) {
-    case 11: // Chest items don't have iEquipLoc and are type 9.
-        overriden = 9;
-        break;
-    case 10: // General items don't have iEquipLoc and are type 7.
-        overriden = 7;
-        break;
-    case 9: // Vehicles have iEquipLoc 8, but type 10.
-        overriden = 10;
-        break;
-    default:
-        overriden = -1;
-    }
-    return overriden;
 }
 
 /*
@@ -373,7 +373,7 @@ void TableData::loadPaths(int* nextId) {
                     if (firstPoint["iX"] != pair.second->spawnX || firstPoint["iY"] != pair.second->spawnY) {
                         std::cout << "[FATAL] The first point of the route for mob " << pair.first <<
                             " (type " << pair.second->appearanceData.iNPCType << ") does not correspond with its spawn point." << std::endl;
-                        terminate(0);
+                        exit(1);
                     }
 
                     constructPathNPC(npcPath, pair.first);
@@ -386,7 +386,7 @@ void TableData::loadPaths(int* nextId) {
     }
     catch (const std::exception& err) {
         std::cerr << "[FATAL] Malformed paths.json file! Reason:" << err.what() << std::endl;
-        terminate(0);
+        exit(1);
     }
 }
 
@@ -478,11 +478,11 @@ void TableData::loadDrops() {
                 throw TableException(std::string(buff));
             }
 
-            std::map<std::pair<int32_t, int32_t>, Item>::iterator toAdd = ItemManager::ItemData.find(itemDataKey);
+            std::map<std::pair<int32_t, int32_t>, ItemManager::Item>::iterator toAdd = ItemManager::ItemData.find(itemDataKey);
 
             // if item collection doesn't exist, start a new one
             if (ItemManager::CrateItems.find(itemSetkey) == ItemManager::CrateItems.end()) {
-                std::vector<std::map<std::pair<int32_t, int32_t>, Item>::iterator> vector;
+                std::vector<std::map<std::pair<int32_t, int32_t>, ItemManager::Item>::iterator> vector;
                 vector.push_back(toAdd);
                 ItemManager::CrateItems[itemSetkey] = vector;
             } else // else add a new element to existing collection
@@ -497,7 +497,7 @@ void TableData::loadDrops() {
     }
     catch (const std::exception& err) {
         std::cerr << "[FATAL] Malformed drops.json file! Reason:" << err.what() << std::endl;
-        terminate(0);
+        exit(1);
     }
 }
 
@@ -539,7 +539,7 @@ void TableData::loadEggs(int32_t* nextId) {
     }
     catch (const std::exception& err) {
         std::cerr << "[FATAL] Malformed eggs.json file! Reason:" << err.what() << std::endl;
-        terminate(0);
+        exit(1);
     }
 }
 
@@ -763,7 +763,7 @@ void TableData::loadGruntwork(int32_t *nextId) {
     }
     catch (const std::exception& err) {
         std::cerr << "[FATAL] Malformed gruntwork.json file! Reason:" << err.what() << std::endl;
-        terminate(0);
+        exit(1);
     }
 }
 

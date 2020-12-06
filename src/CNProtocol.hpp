@@ -10,6 +10,7 @@
     #ifndef NOMINMAX
     #define NOMINMAX
     #endif
+    #define M_PI 3.14159265358979323846
     #define _WINSOCK_DEPRECATED_NO_WARNINGS
     #include <winsock2.h>
     #include <windows.h>
@@ -17,6 +18,8 @@
     #pragma comment(lib, "Ws2_32.lib")
 
     typedef char buffer_t;
+    #define PollFD WSAPOLLFD
+    #define poll WSAPoll
     #define OF_ERRNO WSAGetLastError()
     #define OF_EWOULD WSAEWOULDBLOCK
     #define SOCKETINVALID(x) (x == INVALID_SOCKET)
@@ -26,11 +29,13 @@
     #include <sys/socket.h>
     #include <netinet/in.h>
     #include <arpa/inet.h>
+    #include <poll.h>
     #include <unistd.h>
     #include <errno.h>
 
     typedef int SOCKET;
     typedef void buffer_t;
+    #define PollFD struct pollfd
     #define OF_ERRNO errno
     #define OF_EWOULD EWOULDBLOCK
     #define SOCKETINVALID(x) (x < 0)
@@ -43,6 +48,9 @@
 #include <csignal>
 #include <list>
 #include <queue>
+#include <unordered_map>
+#include <vector>
+#include <algorithm>
 
 #include "Defines.hpp"
 #include "settings.hpp"
@@ -67,7 +75,7 @@ inline void* xmalloc(size_t sz) {
     void* res = calloc(1, sz);
 
     if (res == NULL) {
-        std::cerr << "[FATAL] OpenFusion: calloc failed to allocate memory!" << std::endl;
+        std::cerr << "[FATAL] OpenFusion: out of memory!" << std::endl;
         exit(EXIT_FAILURE);
     }
 
@@ -109,6 +117,8 @@ inline bool validInVarPacket(size_t base, int32_t npayloads, size_t plsize, size
     // everything is a-ok!
     return true;
 }
+
+bool setSockNonblocking(SOCKET listener, SOCKET newSock);
 
 namespace CNSocketEncryption {
     // you won't believe how complicated they made it in the client :facepalm:
@@ -188,8 +198,11 @@ struct TimerEvent {
 // in charge of accepting new connections and making sure each connection is kept alive
 class CNServer {
 protected:
-    std::list<CNSocket*> connections;
+    std::unordered_map<SOCKET, CNSocket*> connections;
     std::mutex activeCrit;
+
+    const size_t STARTFDSCOUNT = 8; // number of initial PollFD slots
+    std::vector<PollFD> fds;
 
     SOCKET sock;
     uint16_t port;
@@ -205,9 +218,13 @@ public:
     CNServer();
     CNServer(uint16_t p);
 
+    void addPollFD(SOCKET s);
+    void removePollFD(int i);
+
     void start();
     void kill();
     static void printPacket(CNPacketData *data, int type);
+    virtual bool checkExtraSockets(int i);
     virtual void newConnection(CNSocket* cns);
     virtual void killConnection(CNSocket* cns);
     virtual void onStep();
