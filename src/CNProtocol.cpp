@@ -78,7 +78,7 @@ bool CNSocket::sendData(uint8_t* data, int size) {
                 maxTries--;
                 continue; // try again
             }
-            std::cout << "[FATAL] SOCKET ERROR: " << OF_ERRNO << std::endl;
+            printSocketError("send");
             return false; // error occured while sending bytes
         }
         sentBytes += sent;
@@ -167,7 +167,10 @@ void CNSocket::step() {
     if (readSize <= 0) {
         // we aren't reading a packet yet, try to start looking for one
         int recved = recv(sock, (buffer_t*)readBuffer, sizeof(int32_t), 0);
-        if (!SOCKETERROR(recved)) {
+        if (recved == 0) {
+            // the socket was closed normally
+            kill();
+        } else if (!SOCKETERROR(recved)) {
             // we got our packet size!!!!
             readSize = *((int32_t*)readBuffer);
             // sanity check
@@ -180,6 +183,7 @@ void CNSocket::step() {
             activelyReading = true;
         } else if (OF_ERRNO != OF_EWOULD) {
             // serious socket issue, disconnect connection
+            printSocketError("recv");
             kill();
             return;
         }
@@ -188,10 +192,14 @@ void CNSocket::step() {
     if (readSize > 0 && readBufferIndex < readSize) {
         // read until the end of the packet! (or at least try too)
         int recved = recv(sock, (buffer_t*)(readBuffer + readBufferIndex), readSize - readBufferIndex, 0);
-        if (!SOCKETERROR(recved))
+        if (recved == 0) {
+            // the socket was closed normally
+            kill();
+        } else if (!SOCKETERROR(recved))
             readBufferIndex += recved;
         else if (OF_ERRNO != OF_EWOULD) {
             // serious socket issue, disconnect connection
+            printSocketError("recv");
             kill();
             return;
         }
@@ -214,6 +222,38 @@ void CNSocket::step() {
     }
 }
 
+void printSocketError(const char *call) {
+#ifdef _WIN32
+    std::cerr << call << ": ";
+   
+    LPSTR lpMsgBuf = nullptr;  // string buffer
+    DWORD errCode = WSAGetLastError(); // error code
+
+    if (errCode == 0) {
+        std::cerr << "no error code" << std::endl;
+        return;
+    }
+
+    size_t bufSize = FormatMessageA( // actually get the error message
+        FORMAT_MESSAGE_ALLOCATE_BUFFER |
+        FORMAT_MESSAGE_FROM_SYSTEM |
+        FORMAT_MESSAGE_IGNORE_INSERTS,
+        NULL,
+        errCode, // in
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        (LPTSTR)&lpMsgBuf, // out
+        0, NULL);
+
+    // convert buffer to string and output message to terminal
+    std::string msg(lpMsgBuf, bufSize);
+    std::cerr << msg; // newline included
+
+    LocalFree(lpMsgBuf); // free the buffer
+#else
+    perror(call);
+#endif
+}
+
 bool setSockNonblocking(SOCKET listener, SOCKET newSock) {
 #ifdef _WIN32
     unsigned long mode = 1;
@@ -221,6 +261,7 @@ bool setSockNonblocking(SOCKET listener, SOCKET newSock) {
 #else
     if (fcntl(newSock, F_SETFL, (fcntl(newSock, F_GETFL, 0) | O_NONBLOCK)) != 0) {
 #endif
+        printSocketError("fcntl");
         std::cerr << "[WARN] OpenFusion: fcntl failed on new connection" << std::endl;
 #ifdef _WIN32
         shutdown(newSock, SD_BOTH);
@@ -241,6 +282,7 @@ void CNServer::init() {
     // create socket file descriptor
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (SOCKETINVALID(sock)) {
+        printSocketError("socket");
         std::cerr << "[FATAL] OpenFusion: socket failed" << std::endl;
         exit(EXIT_FAILURE);
     }
@@ -253,6 +295,7 @@ void CNServer::init() {
     if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) != 0) {
 #endif
         std::cerr << "[FATAL] OpenFusion: setsockopt failed" << std::endl;
+        printSocketError("setsockopt");
         exit(EXIT_FAILURE);
     }
     address.sin_family = AF_INET;
@@ -264,11 +307,13 @@ void CNServer::init() {
     // Bind to the port
     if (SOCKETERROR(bind(sock, (struct sockaddr *)&address, addressSize))) {
         std::cerr << "[FATAL] OpenFusion: bind failed" << std::endl;
+        printSocketError("bind");
         exit(EXIT_FAILURE);
     }
 
     if (SOCKETERROR(listen(sock, SOMAXCONN))) {
         std::cerr << "[FATAL] OpenFusion: listen failed" << std::endl;
+        printSocketError("listen");
         exit(EXIT_FAILURE);
     }
 
@@ -279,6 +324,7 @@ void CNServer::init() {
 #else
     if (fcntl(sock, F_SETFL, (fcntl(sock, F_GETFL, 0) | O_NONBLOCK)) != 0) {
 #endif
+        printSocketError("fcntl");
         std::cerr << "[FATAL] OpenFusion: fcntl failed" << std::endl;
         exit(EXIT_FAILURE);
     }
@@ -305,20 +351,21 @@ void CNServer::removePollFD(int i) {
 }
 
 void CNServer::start() {
-    int oldnfds;
-
     std::cout << "Starting server at *:" << port << std::endl;
     while (active) {
         // the timeout is to ensure shard timers are ticking
         int n = poll(fds.data(), fds.size(), 50);
         if (SOCKETERROR(n)) {
+#ifndef _WIN32
+            if (errno == EINTR)
+                continue;
+#endif
             std::cout << "[FATAL] poll() returned error" << std::endl;
+            printSocketError("poll");
             terminate(0);
         }
 
-        oldnfds = fds.size();
-
-        for (int i = 0; i < oldnfds && n > 0; i++) {
+        for (int i = 0; i < fds.size() && n > 0; i++) {
             if (fds[i].revents == 0)
                 continue; // nothing in this one; don't decrement n
 
@@ -333,8 +380,10 @@ void CNServer::start() {
                 }
 
                 SOCKET newConnectionSocket = accept(sock, (struct sockaddr *)&address, (socklen_t*)&addressSize);
-                if (SOCKETINVALID(newConnectionSocket))
+                if (SOCKETINVALID(newConnectionSocket)) {
+                    printSocketError("accept");
                     continue;
+                }
 
                 if (!setSockNonblocking(sock, newConnectionSocket))
                     continue;
@@ -374,6 +423,9 @@ void CNServer::start() {
                     delete cSock;
 
                     removePollFD(i);
+
+                    // a new entry was moved to this position, so we check it again
+                    i--;
                 }
             }
         }

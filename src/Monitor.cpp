@@ -15,6 +15,7 @@ SOCKET Monitor::init() {
     listener = socket(AF_INET, SOCK_STREAM, 0);
     if (SOCKETERROR(listener)) {
         std::cout << "Failed to create monitor socket" << std::endl;
+        printSocketError("socket");
         exit(1);
     }
 
@@ -25,6 +26,7 @@ SOCKET Monitor::init() {
 #endif
     if (SOCKETERROR(setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)))) {
         std::cout << "Failed to set SO_REUSEADDR on monitor socket" << std::endl;
+        printSocketError("setsockopt");
         exit(1);
     }
 
@@ -34,11 +36,13 @@ SOCKET Monitor::init() {
 
     if (SOCKETERROR(bind(listener, (struct sockaddr*)&address, sizeof(address)))) {
         std::cout << "Failed to bind to monitor port" << std::endl;
+        printSocketError("bind");
         exit(1);
     }
 
     if (SOCKETERROR(listen(listener, SOMAXCONN))) {
         std::cout << "Failed to listen on monitor port" << std::endl;
+        printSocketError("listen");
         exit(1);
     }
 
@@ -49,6 +53,7 @@ SOCKET Monitor::init() {
     if (fcntl(listener, F_SETFL, (fcntl(listener, F_GETFL, 0) | O_NONBLOCK)) != 0) {
 #endif
         std::cerr << "[FATAL] OpenFusion: fcntl failed" << std::endl;
+        printSocketError("fcntl");
         exit(EXIT_FAILURE);
     }
 
@@ -66,6 +71,8 @@ static bool transmit(std::list<SOCKET>::iterator& it, char *buff, int len) {
     while (n < len) {
         n += send(sock, buff+n, len-n, 0);
         if (SOCKETERROR(n)) {
+            printSocketError("send");
+
 #ifdef _WIN32
             shutdown(sock, SD_BOTH);
             closesocket(sock);
@@ -87,8 +94,10 @@ static bool transmit(std::list<SOCKET>::iterator& it, char *buff, int len) {
 void Monitor::tick(CNServer *serv, time_t delta) {
     std::lock_guard<std::mutex> lock(sockLock);
     char buff[256];
+    int n;
 
     auto it = sockets.begin();
+outer:
     while (it != sockets.end()) {
         if (!transmit(it, (char*)"begin\n", 6))
             continue;
@@ -97,12 +106,12 @@ void Monitor::tick(CNServer *serv, time_t delta) {
             if (pair.second->hidden)
                 continue;
 
-            int n = std::snprintf(buff, sizeof(buff), "player %d %d %s\n",
+            n = std::snprintf(buff, sizeof(buff), "player %d %d %s\n",
                     pair.second->x, pair.second->y,
                     PlayerManager::getPlayerName(pair.second, false).c_str());
 
             if (!transmit(it, buff, n))
-                continue;
+                goto outer;
         }
 
         if (!transmit(it, (char*)"end\n", 4))
@@ -127,8 +136,10 @@ bool Monitor::acceptConnection(SOCKET fd, uint16_t revents) {
     }
 
     int sock = accept(listener, (struct sockaddr*)&address, &len);
-    if (SOCKETERROR(sock))
+    if (SOCKETERROR(sock)) {
+        printSocketError("accept");
         return true;
+    }
 
     setSockNonblocking(listener, sock);
 
