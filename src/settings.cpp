@@ -5,11 +5,11 @@
 // defaults :)
 int settings::VERBOSITY = 1;
 
-int settings::LOGINPORT = 8001;
+int settings::LOGINPORT = 23000;
 bool settings::APPROVEALLNAMES = true;
 int settings::DBSAVEINTERVAL = 240;
 
-int settings::SHARDPORT = 8002;
+int settings::SHARDPORT = 23001;
 std::string settings::SHARDSERVERIP = "127.0.0.1";
 time_t settings::TIMEOUT = 60000;
 int settings::VIEWDISTANCE = 25600;
@@ -57,8 +57,8 @@ void settings::init() {
     VERBOSITY = reader.GetInteger("", "verbosity", VERBOSITY);
     LOGINPORT = reader.GetInteger("login", "port", LOGINPORT);
     SHARDPORT = reader.GetInteger("shard", "port", SHARDPORT);
+    DBSAVEINTERVAL = reader.GetInteger("login", "dbsaveinterval", DBSAVEINTERVAL);
     SHARDSERVERIP = reader.Get("shard", "ip", "127.0.0.1");
-    DBSAVEINTERVAL = reader.GetInteger("shard", "dbsaveinterval", DBSAVEINTERVAL);
     TIMEOUT = reader.GetInteger("shard", "timeout", TIMEOUT);
     VIEWDISTANCE = reader.GetInteger("shard", "viewdistance", VIEWDISTANCE);
     SIMULATEMOBS = reader.GetBoolean("shard", "simulatemobs", SIMULATEMOBS);
