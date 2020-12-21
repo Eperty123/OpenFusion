@@ -13,6 +13,10 @@
 #include <string>
 #include <sqlite3.h>
 
+#include <iostream>
+#include <fstream>
+#include <sstream>
+
 #if defined(__MINGW32__) && !defined(_GLIBCXX_HAS_GTHREADS)
     #include "mingw/mingw.mutex.h"
 #else
@@ -127,11 +131,44 @@ void Database::checkMetaTable() {
     int dbVersion = sqlite3_column_int(stmt, 0);
     sqlite3_finalize(stmt);
 
-    if (dbVersion != DATABASE_VERSION) {
-        // we should be handling migrations here in the future
-        std::cout << "[FATAL] DB Version doesn't match Server Build" << std::endl;
+    if (dbVersion > DATABASE_VERSION) {
+        std::cout << "[FATAL] Server Build is incompatible with DB Version" << std::endl;
         exit(1);
+    } else if (dbVersion < DATABASE_VERSION) {
+        // we're gonna migrate; back up the DB
+        std::cout << "[INFO] Backing up database" << std::endl;
+        // copy db file over using binary streams
+        std::ifstream  src(settings::DBPATH, std::ios::binary);
+        std::ofstream  dst(settings::DBPATH + ".old." + std::to_string(dbVersion), std::ios::binary);
+        dst << src.rdbuf();
+        src.close();
+        dst.close();
     }
+
+    while (dbVersion != DATABASE_VERSION) {
+        // db migrations
+        std::cout << "[INFO] Migrating Database to Version " << dbVersion + 1 << std::endl;
+
+        std::string path = "sql/migration" + std::to_string(dbVersion) + ".sql";
+        std::ifstream file(path);
+        if (!file.is_open()) {
+            std::cout << "[FATAL] Failed to migrate database: Couldn't open migration file" << std::endl;
+            exit(1);
+        }
+
+        std::ostringstream stream;
+        stream << file.rdbuf();
+        std::string sql = stream.str();
+        int rc = sqlite3_exec(db, sql.c_str(), NULL, NULL, NULL);
+
+        if (rc != SQLITE_OK) {
+            std::cout << "[FATAL] Failed to migrate database: " << sqlite3_errmsg(db) << std::endl;
+            exit(1);
+        }
+
+        dbVersion++;
+        std::cout << "[INFO] Successful Database Migration to Version " << dbVersion << std::endl;
+    }    
 }
 
 void Database::createMetaTable() {
@@ -142,8 +179,7 @@ void Database::createMetaTable() {
     const char* sql = R"(
         CREATE TABLE Meta(
             Key TEXT NOT NULL UNIQUE,
-            Value INTEGER NOT NULL,
-            Created	INTEGER DEFAULT (strftime('%s', 'now'))
+            Value INTEGER NOT NULL
         );
         )";
     sqlite3_stmt* stmt;
@@ -187,165 +223,18 @@ void Database::createMetaTable() {
 }
 
 void Database::createTables() {
-    std::lock_guard<std::mutex> lock(dbCrit);
+    std::ifstream file("sql/tables.sql");
+    if (!file.is_open()) {
+        std::cout << "[FATAL] Failed to open database scheme" << std::endl;
+        exit(1);
+    }
+
+    std::ostringstream stream;
+    stream << file.rdbuf();
+    std::string read = stream.str();
+    const char* sql = read.c_str();
 
     char* errMsg = 0;
-    const char* sql;
-
-    sql = R"(
-        CREATE TABLE IF NOT EXISTS Accounts (
-            AccountID    INTEGER NOT NULL,
-            Login        TEXT    NOT NULL UNIQUE,
-            Password     TEXT    NOT NULL,
-            Selected     INTEGER  DEFAULT 1 NOT NULL,
-            AccountLevel INTEGER NOT NULL,
-            Created      INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL,
-            LastLogin    INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL,
-            BannedUntil  INTEGER DEFAULT 0 NOT NULL,
-            BannedSince  INTEGER DEFAULT 0 NOT NULL,
-            PRIMARY KEY(AccountID AUTOINCREMENT)
-        );
-
-        CREATE TABLE IF NOT EXISTS Players (
-            PlayerID           INTEGER NOT NULL,
-            AccountID          INTEGER NOT NULL,
-            FirstName          TEXT NOT NULL COLLATE NOCASE,
-            LastName           TEXT NOT NULL COLLATE NOCASE,
-            NameCheck          INTEGER NOT NULL,
-            Slot               INTEGER NOT NULL,
-            Created            INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL,
-            LastLogin          INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL,
-            Level              INTEGER DEFAULT 1 NOT NULL,
-            Nano1              INTEGER DEFAULT 0 NOT NULL,
-            Nano2              INTEGER DEFAULT 0 NOT NULL,
-            Nano3              INTEGER DEFAULT 0 NOT NULL,
-            AppearanceFlag     INTEGER DEFAULT 0 NOT NULL,
-            TutorialFlag       INTEGER DEFAULT 0 NOT NULL,
-            PayZoneFlag        INTEGER DEFAULT 0 NOT NULL,
-            XCoordinates       INTEGER NOT NULL,
-            YCoordinates       INTEGER NOT NULL,
-            ZCoordinates       INTEGER NOT NULL,
-            Angle              INTEGER NOT NULL,
-            HP                 INTEGER NOT NULL,
-            FusionMatter       INTEGER DEFAULT 0 NOT NULL,
-            Taros              INTEGER DEFAULT 0 NOT NULL,
-            BatteryW           INTEGER DEFAULT 0 NOT NULL,
-            BatteryN           INTEGER DEFAULT 0 NOT NULL,
-            Mentor             INTEGER DEFAULT 5 NOT NULL,
-            CurrentMissionID   INTEGER DEFAULT 0 NOT NULL,
-            WarpLocationFlag   INTEGER DEFAULT 0 NOT NULL,
-            SkywayLocationFlag BLOB NOT NULL,
-            FirstUseFlag       BLOB NOT NULL,
-            Quests             BLOB NOT NULL,
-            PRIMARY KEY(PlayerID AUTOINCREMENT),
-            FOREIGN KEY(AccountID) REFERENCES Accounts(AccountID) ON DELETE CASCADE,
-            UNIQUE (AccountID, Slot),
-            UNIQUE (FirstName, LastName)
-        );
-
-        CREATE TABLE IF NOT EXISTS Appearances (
-            PlayerID    INTEGER UNIQUE NOT NULL,
-            Body        INTEGER DEFAULT 0 NOT NULL,
-            EyeColor    INTEGER DEFAULT 1 NOT NULL,
-            FaceStyle   INTEGER DEFAULT 1 NOT NULL,
-            Gender      INTEGER DEFAULT 1 NOT NULL,
-            HairColor   INTEGER DEFAULT 1 NOT NULL,
-            HairStyle   INTEGER DEFAULT 1 NOT NULL,
-            Height      INTEGER DEFAULT 0 NOT NULL,
-            SkinColor   INTEGER DEFAULT 1 NOT NULL,
-            FOREIGN KEY(PlayerID) REFERENCES Players(PlayerID) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS Inventory (
-            PlayerID    INTEGER NOT NULL,
-            Slot        INTEGER NOT NULL,
-            ID          INTEGER NOT NULL,
-            Type        INTEGER NOT NULL,
-            Opt         INTEGER NOT NULL,
-            TimeLimit   INTEGER DEFAULT 0 NOT NULL,
-            FOREIGN KEY(PlayerID) REFERENCES Players(PlayerID) ON DELETE CASCADE,
-            UNIQUE (PlayerID, Slot)
-        );
-
-        CREATE TABLE IF NOT EXISTS QuestItems (
-            PlayerID    INTEGER NOT NULL,
-            Slot        INTEGER NOT NULL,
-            ID          INTEGER NOT NULL,
-            Opt         INTEGER NOT NULL,
-            FOREIGN KEY(PlayerID) REFERENCES Players(PlayerID) ON DELETE CASCADE,
-            UNIQUE (PlayerID, Slot)
-        );
-
-        CREATE TABLE IF NOT EXISTS Nanos (
-            PlayerID    INTEGER NOT NULL,
-            ID          INTEGER NOT NULL,
-            Skill       INTEGER NOT NULL,
-            Stamina     INTEGER DEFAULT 150 NOT NULL,
-            FOREIGN KEY(PlayerID) REFERENCES Players(PlayerID) ON DELETE CASCADE,
-            UNIQUE (PlayerID, ID)
-        );
-
-        CREATE TABLE IF NOT EXISTS RunningQuests (
-            PlayerID              INTEGER NOT NULL,
-            TaskID                INTEGER NOT NULL,
-            RemainingNPCCount1    INTEGER NOT NULL,
-            RemainingNPCCount2    INTEGER NOT NULL,
-            RemainingNPCCount3    INTEGER NOT NULL,
-            FOREIGN KEY(PlayerID) REFERENCES Players(PlayerID) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS Buddyships (
-            PlayerAID    INTEGER NOT NULL,
-            PlayerBID    INTEGER NOT NULL,
-            FOREIGN KEY(PlayerAID) REFERENCES Players(PlayerID) ON DELETE CASCADE,
-            FOREIGN KEY(PlayerBID) REFERENCES Players(PlayerID) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS Blocks (
-            PlayerID           INTEGER NOT NULL,
-            BlockedPlayerID    INTEGER NOT NULL,
-            FOREIGN KEY(PlayerID)        REFERENCES Players(PlayerID) ON DELETE CASCADE,
-            FOREIGN KEY(BlockedPlayerID) REFERENCES Players(PlayerID) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS EmailData (
-            PlayerID        INTEGER NOT NULL,
-            MsgIndex        INTEGER NOT NULL,
-            ReadFlag        INTEGER NOT NULL,
-            ItemFlag        INTEGER NOT NULL,
-            SenderID        INTEGER NOT NULL,
-            SenderFirstName TEXT NOT NULL COLLATE NOCASE,
-            SenderLastName  TEXT NOT NULL COLLATE NOCASE,
-            SubjectLine     TEXT NOT NULL,
-            MsgBody         TEXT NOT NULL,
-            Taros           INTEGER NOT NULL,
-            SendTime        INTEGER NOT NULL,
-            DeleteTime      INTEGER NOT NULL,
-            FOREIGN KEY(PlayerID) REFERENCES Players(PlayerID) ON DELETE CASCADE,
-            UNIQUE(PlayerID, MsgIndex)
-        );
-
-        CREATE TABLE IF NOT EXISTS EmailItems (
-            PlayerID    INTEGER NOT NULL,
-            MsgIndex    INTEGER NOT NULL,
-            Slot        INTEGER NOT NULL,
-            ID          INTEGER NOT NULL,
-            Type        INTEGER NOT NULL,
-            Opt         INTEGER NOT NULL,
-            TimeLimit   INTEGER NOT NULL,
-            FOREIGN KEY(PlayerID) REFERENCES Players(PlayerID) ON DELETE CASCADE,
-            UNIQUE (MsgIndex, Slot)
-        );
-
-        CREATE TABLE IF NOT EXISTS RaceResults(
-            EPID      INTEGER NOT NULL,
-            PlayerID  INTEGER NOT NULL,
-            Score     INTEGER NOT NULL,
-            Timestamp INTEGER NOT NULL,
-            FOREIGN KEY(PlayerID) REFERENCES Players(PlayerID) ON DELETE CASCADE
-        );
-        )";
-
     int rc = sqlite3_exec(db, sql, NULL, NULL, &errMsg);
     if (rc != SQLITE_OK) {
         std::cout << "[FATAL] Database failed to create tables: " << errMsg << std::endl;
@@ -370,7 +259,7 @@ void Database::findAccount(Account* account, std::string login) {
     std::lock_guard<std::mutex> lock(dbCrit);
 
     const char* sql = R"(
-        SELECT AccountID, Password, Selected, BannedUntil
+        SELECT AccountID, Password, Selected, BannedUntil, BanReason
         FROM Accounts
         WHERE Login = ?
         LIMIT 1;
@@ -386,6 +275,7 @@ void Database::findAccount(Account* account, std::string login) {
         account->Password = std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)));
         account->Selected = sqlite3_column_int(stmt, 2);
         account->BannedUntil = sqlite3_column_int64(stmt, 3);
+        account->BanReason = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
     }
     sqlite3_finalize(stmt);
 }

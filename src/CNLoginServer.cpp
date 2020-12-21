@@ -118,8 +118,20 @@ void CNLoginServer::login(CNSocket* sock, CNPacketData* data) {
         userPassword.erase(userPassword.find("\n"), 1);
 
     // check regex
-    if (!CNLoginServer::isLoginDataGood(userLogin, userPassword))
+    if (!CNLoginServer::isLoginDataGood(userLogin, userPassword)) {
+        // send a custom error message
+        INITSTRUCT(sP_FE2CL_GM_REP_PC_ANNOUNCE, msg);
+        std::string text = "Invalid login or password\n";
+        text += "Login has to be 4 - 32 characters long and can't contain special characters other than dash and underscore\n";
+        text += "Password has to be 8 - 32 characters long";          
+        U8toU16(text, msg.szAnnounceMsg, sizeof(msg.szAnnounceMsg));
+        msg.iDuringTime = 15;
+        sock->sendPacket((void*)&msg, P_FE2CL_GM_REP_PC_ANNOUNCE, sizeof(sP_FE2CL_GM_REP_PC_ANNOUNCE));
+
+        // we still have to send login fail to prevent softlock
         return loginFail(LoginError::LOGIN_ERROR, userLogin, sock);
+    }
+        
 
     Database::Account findUser = {};
     Database::findAccount(&findUser, userLogin);
@@ -132,8 +144,25 @@ void CNLoginServer::login(CNSocket* sock, CNPacketData* data) {
         return loginFail(LoginError::ID_AND_PASSWORD_DO_NOT_MATCH, userLogin, sock);
 
     // is the account banned
-    if (findUser.BannedUntil > getTimestamp())
-        return loginFail(LoginError::LOGIN_ERROR, userLogin, sock);
+    if (findUser.BannedUntil > getTimestamp()) {
+        // send a custom error message
+        INITSTRUCT(sP_FE2CL_GM_REP_PC_ANNOUNCE, msg);
+
+        // ceiling devision
+        int64_t remainingDays = (findUser.BannedUntil-getTimestamp()) / 86400 + ((findUser.BannedUntil - getTimestamp()) % 86400 != 0);
+
+        std::string text = "Your account has been banned. \nReason: ";
+        text += findUser.BanReason;
+        text += "\nBan expires in " + std::to_string(remainingDays) + " day";
+        if (remainingDays > 1)
+            text += "s";
+
+        U8toU16(text, msg.szAnnounceMsg, sizeof(msg.szAnnounceMsg));
+        msg.iDuringTime = 99999999;
+        sock->sendPacket((void*)&msg, P_FE2CL_GM_REP_PC_ANNOUNCE, sizeof(sP_FE2CL_GM_REP_PC_ANNOUNCE));
+        // don't send fail packet
+        return;
+    }
 
     /* 
      * calling this here to timestamp login attempt,
@@ -180,7 +209,10 @@ void CNLoginServer::login(CNSocket* sock, CNPacketData* data) {
         sock->sendPacket((void*)&*it, P_LS2CL_REP_CHAR_INFO, sizeof(sP_LS2CL_REP_CHAR_INFO));
 
     DEBUGLOG(
-        std::cout << "Login Server: Loaded " << (int)resp.iCharCount << " characters" << std::endl;
+        std::string message = "Login Server: Loaded " + std::to_string(resp.iCharCount) + "character";
+        if ((int)resp.iCharCount > 1)
+            message += "s";
+        std::cout << message << std::endl;
     )
 }
 
