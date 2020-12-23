@@ -243,6 +243,7 @@ void PlayerManager::enterPlayer(CNSocket* sock, CNPacketData* data) {
     // nanos
     for (int i = 1; i < SIZEOF_NANO_BANK_SLOT; i++) {
         response.PCLoadData2CL.aNanoBank[i] = plr.Nanos[i];
+        //response.PCLoadData2CL.aNanoBank[i] = plr.Nanos[i] = {0};
     }
     for (int i = 0; i < 3; i++) {
         response.PCLoadData2CL.aNanoSlots[i] = plr.equippedNanos[i];
@@ -304,12 +305,43 @@ void PlayerManager::enterPlayer(CNSocket* sock, CNPacketData* data) {
 
     MissionManager::failInstancedMissions(sock);
 
+    sendNanoBookSubset(sock);
+
     // initial buddy sync
     BuddyManager::refreshBuddyList(sock);
 
     for (auto& pair : PlayerManager::players)
         if (pair.second->notify)
             ChatManager::sendServerMessage(pair.first, "[ADMIN]" + getPlayerName(&plr) + " has joined.");
+}
+
+/*
+ * Sends all nanos, from 0 to 58 (the contents of the Nanos array in PC_ENTER_SUCC are totally irrelevant).
+ * The first Nano in the in-game nanobook is the Unstable Nano, which is Van Kleiss.
+ * 0 (in plr->Nanos) is the null nano entry.
+ * 58 is a "Coming Soon" duplicate entry for an actual Van Kleiss nano, identical to the Unstable Nano.
+ * Nanos the player hasn't unlocked will (and should) be greyed out. Thus, all nanos should be accounted
+ * for in these packets, even if the player hasn't unlocked them.
+ */
+void PlayerManager::sendNanoBookSubset(CNSocket *sock) {
+#ifdef ACADEMY
+    Player *plr = getPlayer(sock);
+
+    int16_t id = 0;
+    INITSTRUCT(sP_FE2CL_REP_NANO_BOOK_SUBSET, pkt);
+
+    pkt.PCUID = plr->iID;
+    pkt.bookSize = NANO_COUNT;
+
+    while (id < NANO_COUNT) {
+        pkt.elementOffset = id;
+
+        for (int i = id - pkt.elementOffset; id < NANO_COUNT && i < 10; id++, i = id - pkt.elementOffset)
+            pkt.element[i] = plr->Nanos[id];
+
+        sock->sendPacket((void*)&pkt, P_FE2CL_REP_NANO_BOOK_SUBSET, sizeof(sP_FE2CL_REP_NANO_BOOK_SUBSET));
+    }
+#endif
 }
 
 void PlayerManager::sendToViewable(CNSocket* sock, void* buf, uint32_t type, size_t size) {
@@ -807,7 +839,9 @@ void PlayerManager::revivePlayer(CNSocket* sock, CNPacketData* data) {
 void PlayerManager::enterPlayerVehicle(CNSocket* sock, CNPacketData* data) {
     Player* plr = getPlayer(sock);
 
-    if (plr->Equip[8].iID > 0 && plr->Equip[8].iTimeLimit>getTimestamp()) {
+    bool expired = plr->Equip[8].iTimeLimit < getTimestamp() && plr->Equip[8].iTimeLimit != 0;
+
+    if (plr->Equip[8].iID > 0 && !expired) {
         INITSTRUCT(sP_FE2CL_PC_VEHICLE_ON_SUCC, response);
         sock->sendPacket((void*)&response, P_FE2CL_PC_VEHICLE_ON_SUCC, sizeof(sP_FE2CL_PC_VEHICLE_ON_SUCC));
 
@@ -823,7 +857,7 @@ void PlayerManager::enterPlayerVehicle(CNSocket* sock, CNPacketData* data) {
         sock->sendPacket((void*)&response, P_FE2CL_PC_VEHICLE_ON_FAIL, sizeof(sP_FE2CL_PC_VEHICLE_ON_FAIL));
 
         // check if vehicle didn't expire
-        if (plr->Equip[8].iTimeLimit < getTimestamp()) {
+        if (expired) {
             plr->toRemoveVehicle.eIL = 0;
             plr->toRemoveVehicle.iSlotNum = 8;
             ItemManager::checkItemExpire(sock, plr);

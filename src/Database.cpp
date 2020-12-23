@@ -1,5 +1,4 @@
 #include "Database.hpp"
-#include "Database.hpp"
 #include "CNProtocol.hpp"
 #include "CNStructs.hpp"
 #include "settings.hpp"
@@ -577,19 +576,27 @@ bool Database::finishTutorial(int playerID, int accountID) {
     const char* sql = R"(
         UPDATE Players SET
             TutorialFlag = 1,
-            Nano1 = 1,
+            Nano1 = ?,
             Quests = ?
         WHERE PlayerID = ? AND AccountID = ? AND TutorialFlag = 0;
         )";
     sqlite3_stmt* stmt;
     sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
 
-    // save missions nr 1 & 2
     unsigned char questBuffer[128] = { 0 };
+
+#ifndef ACADEMY
+    // save missions nr 1 & 2; equip Buttercup
     questBuffer[0] = 3;
-    sqlite3_bind_blob(stmt, 1, questBuffer, sizeof(questBuffer), NULL);
-    sqlite3_bind_int(stmt, 2, playerID);
-    sqlite3_bind_int(stmt, 3, accountID);
+    sqlite3_bind_int(stmt, 1, 1);
+#else
+    // no, none of that
+    sqlite3_bind_int(stmt, 1, 0);
+#endif
+
+    sqlite3_bind_blob(stmt, 2, questBuffer, sizeof(questBuffer), NULL);
+    sqlite3_bind_int(stmt, 3, playerID);
+    sqlite3_bind_int(stmt, 4, accountID);
 
     if (sqlite3_step(stmt) != SQLITE_DONE) {
         sqlite3_finalize(stmt);
@@ -599,6 +606,7 @@ bool Database::finishTutorial(int playerID, int accountID) {
 
     sqlite3_finalize(stmt);
 
+#ifndef ACADEMY
     // Lightning Gun
     sql = R"(
         INSERT INTO Inventory
@@ -634,6 +642,7 @@ bool Database::finishTutorial(int playerID, int accountID) {
         sqlite3_exec(db, "ROLLBACK TRANSACTION;", NULL, NULL, NULL);
         return false;
     }
+#endif
 
     sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
     return true;
@@ -960,7 +969,7 @@ void Database::getPlayer(Player* plr, int id) {
         int id = sqlite3_column_int(stmt, 0);
 
         // for extra safety
-        if (id > SIZEOF_NANO_BANK_SLOT)
+        if (id > NANO_COUNT)
             continue;
 
         sNano* nano = &plr->Nanos[id];
@@ -985,13 +994,18 @@ void Database::getPlayer(Player* plr, int id) {
     sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
     sqlite3_bind_int(stmt, 1, id);
 
-    int i = 0;
-    while (sqlite3_step(stmt) == SQLITE_ROW && i < ACTIVE_MISSION_COUNT) {
-        plr->tasks[i] = sqlite3_column_int(stmt, 0);
+    std::set<int> tasksSet; // used to prevent duplicate tasks from loading in
+    for (int i = 0; sqlite3_step(stmt) == SQLITE_ROW && i < ACTIVE_MISSION_COUNT; i++) {
+
+        int taskID = sqlite3_column_int(stmt, 0);
+        if (tasksSet.find(taskID) != tasksSet.end())
+            continue;
+
+        plr->tasks[i] = taskID;
+        tasksSet.insert(taskID);
         plr->RemainingNPCCount[i][0] = sqlite3_column_int(stmt, 1);
         plr->RemainingNPCCount[i][1] = sqlite3_column_int(stmt, 2);
         plr->RemainingNPCCount[i][2] = sqlite3_column_int(stmt, 3);
-        i++;
     }
 
     sqlite3_finalize(stmt);
@@ -1007,7 +1021,7 @@ void Database::getPlayer(Player* plr, int id) {
     sqlite3_bind_int(stmt, 1, id);
     sqlite3_bind_int(stmt, 2, id);
 
-    i = 0;
+    int i = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW && i < 50) {
         int PlayerAId = sqlite3_column_int(stmt, 0);
         int PlayerBId = sqlite3_column_int(stmt, 1);
@@ -1230,7 +1244,7 @@ void Database::updatePlayer(Player *player) {
         )";
     sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
 
-    for (int i = 0; i < SIZEOF_NANO_BANK_SLOT; i++) {
+    for (int i = 0; i < NANO_COUNT; i++) {
         if (player->Nanos[i].iID == 0)
             continue;
 
@@ -1294,7 +1308,7 @@ void Database::removeExpiredVehicles(Player* player) {
 
     // if there are expired vehicles in bank just remove them silently
     for (int i = 0; i < ABANK_COUNT; i++) {
-        if (player->Bank[i].iType == 10 && player->Bank[i].iTimeLimit < currentTime) {
+        if (player->Bank[i].iType == 10 && player->Bank[i].iTimeLimit < currentTime && player->Bank[i].iTimeLimit != 0) {
             memset(&player->Bank[i], 0, sizeof(sItemBase));
         }
     }
@@ -1303,14 +1317,14 @@ void Database::removeExpiredVehicles(Player* player) {
     std::vector<sItemBase*> toRemove;
 
     // equipped vehicle
-    if (player->Equip[8].iOpt > 0 && player->Equip[8].iTimeLimit < currentTime) {
+    if (player->Equip[8].iOpt > 0 && player->Equip[8].iTimeLimit < currentTime && player->Equip[8].iTimeLimit != 0) {
         toRemove.push_back(&player->Equip[8]);
         player->toRemoveVehicle.eIL = 0;
         player->toRemoveVehicle.iSlotNum = 8;
     }
     // inventory
     for (int i = 0; i < AINVEN_COUNT; i++) {
-        if (player->Inven[i].iType == 10 && player->Inven[i].iTimeLimit < currentTime) {
+        if (player->Inven[i].iType == 10 && player->Inven[i].iTimeLimit < currentTime && player->Inven[i].iTimeLimit != 0) {
             toRemove.push_back(&player->Inven[i]);
             player->toRemoveVehicle.eIL = 1;
             player->toRemoveVehicle.iSlotNum = i;

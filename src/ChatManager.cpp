@@ -8,6 +8,7 @@
 #include "MobManager.hpp"
 #include "MissionManager.hpp"
 #include "ChunkManager.hpp"
+#include "ItemManager.hpp"
 
 #include <sstream>
 #include <iterator>
@@ -209,8 +210,10 @@ void summonWCommand(std::string full, std::vector<std::string>& args, CNSocket* 
         return;
     }
 
+    int limit = NPCManager::NPCData.back()["m_iNpcNumber"];
+
     // permission & sanity check
-    if (type >= 3314)
+    if (type > limit)
         return;
 
     BaseNPC *npc = NPCManager::summonNPC(plr->x, plr->y, plr->z, plr->instanceID, type, true);
@@ -540,8 +543,10 @@ void summonGroupCommand(std::string full, std::vector<std::string>& args, CNSock
         return;
     }
 
+    int limit = NPCManager::NPCData.back()["m_iNpcNumber"];
+
     // permission & sanity check
-    if (type >= 3314 || type2 >= 3314 || count > 5) {
+    if (type > limit || type2 > limit || count > 5) {
         ChatManager::sendServerMessage(sock, "Invalid parameters; double check types and count");
         return;
     }
@@ -679,7 +684,7 @@ void lairUnlockCommand(std::string full, std::vector<std::string>& args, CNSocke
     }
 
     INITSTRUCT(sP_FE2CL_REP_PC_TASK_START_SUCC, taskResp);
-    MissionManager::startTask(plr, taskID, false);
+    MissionManager::startTask(plr, taskID);
     taskResp.iTaskNum = taskID;
     taskResp.iRemainTime = 0;
     sock->sendPacket((void*)&taskResp, P_FE2CL_REP_PC_TASK_START_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_START_SUCC));
@@ -712,6 +717,68 @@ void unhideCommand(std::string full, std::vector<std::string>& args, CNSocket* s
     ChatManager::sendServerMessage(sock, "[HIDE] Successfully un-hidden from the map.");
 }
 
+void redeemCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
+    if (args.size() < 2) {
+        ChatManager::sendServerMessage(sock, "/redeem: No code specified");
+        return;
+    }
+
+    // convert string to all lowercase
+    const char* codeRaw = args[1].c_str();
+    if (args[1].size() > 256) { // prevent overflow
+        ChatManager::sendServerMessage(sock, "/redeem: Code too long");
+        return;
+    }
+
+    char buf[256];
+    for (int i = 0; i < args[1].size(); i++)
+        buf[i] = std::tolower(codeRaw[i]);
+    std::string code(buf, args[1].size());
+
+    if (ItemManager::CodeItems.find(code) == ItemManager::CodeItems.end()) {
+        ChatManager::sendServerMessage(sock, "/redeem: Unknown code");
+        return;
+    }
+
+    Player* plr = PlayerManager::getPlayer(sock);
+    int itemCount = ItemManager::CodeItems[code].size();
+    int slots[4];
+
+    for (int i = 0; i < itemCount; i++) {
+        slots[i] = ItemManager::findFreeSlot(plr);
+        if (slots[i] == -1) {
+            ChatManager::sendServerMessage(sock, "/redeem: Not enough space in inventory");
+
+            // delete any temp items we might have set
+            for (int j = 0; j < i; j++) {
+                plr->Inven[slots[j]] = { 0, 0, 0, 0 }; // empty
+            }
+            return;
+        }
+
+        plr->Inven[slots[i]] = { 999, 999, 999, 0 }; // temp item; overwritten later
+    }
+    
+    for (int i = 0; i < itemCount; i++) {
+        std::pair<int32_t, int32_t> item = ItemManager::CodeItems[code][i];
+        INITSTRUCT(sP_FE2CL_REP_PC_GIVE_ITEM_SUCC, resp);
+
+        resp.eIL = 1;
+        resp.iSlotNum = slots[i];
+        resp.Item.iID = item.first;
+        resp.Item.iType = item.second;
+        // I think it is safe? :eyes
+        resp.Item.iOpt = 1;
+
+        // save serverside
+        plr->Inven[resp.iSlotNum] = resp.Item;
+
+        sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_GIVE_ITEM_SUCC, sizeof(sP_FE2CL_REP_PC_GIVE_ITEM_SUCC));
+    }
+    std::string msg = itemCount == 1 ? "You have redeemed a code item" : "You have redeemed code items";
+    ChatManager::sendServerMessage(sock, msg);
+}
+
 void ChatManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_SEND_FREECHAT_MESSAGE, chatHandler);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_AVATAR_EMOTES_CHAT, emoteHandler);
@@ -729,6 +796,7 @@ void ChatManager::init() {
     registerCommand("toggleai", 30, toggleAiCommand, "enable/disable mob AI");
     registerCommand("flush", 30, flushCommand, "save gruntwork to file");
     registerCommand("level", 50, levelCommand, "change your character's level");
+    registerCommand("levelx", 50, levelCommand, "change your character's level"); // for Academy
     registerCommand("population", 100, populationCommand, "check how many players are online");
     registerCommand("refresh", 100, refreshCommand, "teleport yourself to your current location");
     registerCommand("minfo", 30, minfoCommand, "show details of the current mission and task.");
@@ -743,6 +811,7 @@ void ChatManager::init() {
     registerCommand("lair", 50, lairUnlockCommand, "get the required mission for the nearest fusion lair");
     registerCommand("hide", 100, hideCommand, "hide yourself from the global player map");
     registerCommand("unhide", 100, unhideCommand, "un-hide yourself from the global player map");
+    registerCommand("redeem", 100, redeemCommand, "redeem a code item");
 }
 
 void ChatManager::registerCommand(std::string cmd, int requiredLevel, CommandHandler handlr, std::string help) {

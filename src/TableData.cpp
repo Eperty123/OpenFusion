@@ -197,7 +197,7 @@ void TableData::init() {
             auto nano = _nano.value();
             NanoData nanoData;
             nanoData.style = nano["m_iStyle"];
-            NanoManager::NanoTable[nano["m_iNanoNumber"]] = nanoData;
+            NanoManager::NanoTable[NanoManager::NanoTable.size()] = nanoData;
         }
 
         std::cout << "[INFO] Loaded " << NanoManager::NanoTable.size() << " nanos" << std::endl;
@@ -318,6 +318,40 @@ void TableData::init() {
         std::cerr << "[FATAL] Malformed mobs.json file! Reason:" << err.what() << std::endl;
         exit(1);
     }
+
+#ifdef ACADEMY
+    // load Academy NPCs from academy.json
+    try {
+        std::ifstream inFile(settings::ACADEMYJSON);
+        nlohmann::json npcData;
+
+        // read file into json
+        inFile >> npcData;
+        npcData = npcData["NPCs"];
+        for (nlohmann::json::iterator _npc = npcData.begin(); _npc != npcData.end(); _npc++) {
+            auto npc = _npc.value();
+            int instanceID = npc.find("iMapNum") == npc.end() ? INSTANCE_OVERWORLD : (int)npc["iMapNum"];
+
+            int team = NPCManager::NPCData[(int)npc["iNPCType"]]["m_iTeam"];
+
+            if (team == 2) {
+                NPCManager::NPCs[nextId] = new Mob(npc["iX"], npc["iY"], npc["iZ"], npc["iAngle"], instanceID, npc["iNPCType"], NPCManager::NPCData[(int)npc["iNPCType"]], nextId);
+                MobManager::Mobs[nextId] = (Mob*)NPCManager::NPCs[nextId];
+            } else
+                NPCManager::NPCs[nextId] = new BaseNPC(npc["iX"], npc["iY"], npc["iZ"], npc["iAngle"], instanceID, npc["iNPCType"], nextId);
+
+            NPCManager::updateNPCPosition(nextId, npc["iX"], npc["iY"], npc["iZ"], instanceID, npc["iAngle"]);
+            nextId++;
+
+            if (npc["iNPCType"] == 641 || npc["iNPCType"] == 642)
+                NPCManager::RespawnPoints.push_back({ npc["iX"], npc["iY"], ((int)npc["iZ"]) + RESURRECT_HEIGHT, instanceID });
+        }
+    }
+    catch (const std::exception& err) {
+        std::cerr << "[FATAL] Malformed academy.json file! Reason:" << err.what() << std::endl;
+        exit(1);
+    }
+#endif
 
     loadDrops();
 
@@ -536,6 +570,26 @@ void TableData::loadDrops() {
             itemCount++;
         }
 
+#ifdef ACADEMY
+        nlohmann::json capsules = dropData["NanoCapsules"];
+
+        for (nlohmann::json::iterator _capsule = capsules.begin(); _capsule != capsules.end(); _capsule++) {
+            auto capsule = _capsule.value();
+            ItemManager::NanoCapsules[(int)capsule["Crate"]] = (int)capsule["Nano"];
+        }
+#endif
+        nlohmann::json codes = dropData["CodeItems"];
+        for (nlohmann::json::iterator _code = codes.begin(); _code != codes.end(); _code++) {
+            auto code = _code.value();
+            std::string codeStr = code["Code"];
+            std::pair<int32_t, int32_t> item = std::make_pair((int)code["Id"], (int)code["Type"]);
+
+            if (ItemManager::CodeItems.find(codeStr) == ItemManager::CodeItems.end())
+                ItemManager::CodeItems[codeStr] = std::vector<std::pair<int32_t, int32_t>>();
+
+            ItemManager::CodeItems[codeStr].push_back(item);
+        }
+
         std::cout << "[INFO] Loaded " << ItemManager::Crates.size() << " Crates containing "
                   << itemCount << " items" << std::endl;
 
@@ -554,9 +608,8 @@ void TableData::loadDrops() {
             }
 
             if (EPMap == -1) { // not found
-                char buff[255];
-                sprintf(buff, "EP with ID %d not found", raceEPID);
-                throw TableException(std::string(buff));
+                std::cout << "[WARN] EP with ID " << raceEPID << " not found, skipping" << std::endl;
+                continue;
             }
 
             // time limit isn't stored in the XDT, so we include it in the reward table instead

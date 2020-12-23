@@ -34,6 +34,7 @@ namespace ItemManager {
     // pair <Itemset, Rarity> -> vector of pointers (map iterators) to records in ItemData (it looks a lot scarier than it is)
     extern std::map<std::pair<int32_t, int32_t>,
         std::vector<std::map<std::pair<int32_t, int32_t>, Item>::iterator>> CrateItems;
+    extern std::map<std::string, std::vector<std::pair<int32_t, int32_t>>> CodeItems; // code -> vector of <id, type>
 
     void init();
 
@@ -64,4 +65,9 @@ namespace ItemManager {
     void checkItemExpire(CNSocket* sock, Player* player);
     void setItemStats(Player* plr);
     void updateEquips(CNSocket* sock, Player* plr);
+
+#ifdef ACADEMY
+    extern std::map<int32_t, int32_t> NanoCapsules; // crate id -> nano id
+    void nanoCapsuleHandler(CNSocket* sock, sP_CL2FE_REQ_ITEM_CHEST_OPEN* chest);
+#endif
 }
