@@ -8,6 +8,7 @@
 #include "TableData.hpp"
 #include "ChatManager.hpp"
 #include "GroupManager.hpp"
+#include "RacingManager.hpp"
 
 #include <cmath>
 #include <algorithm>
@@ -531,8 +532,20 @@ void NPCManager::handleWarp(CNSocket* sock, int32_t warpId) {
     if (Warps.find(warpId) == Warps.end())
         return;
 
-    // remove the player's vehicle
-    plr->iPCState &= ~8;
+    if (plr->iPCState | 8) {
+        // remove the player's vehicle
+        plr->iPCState &= ~8;
+
+        // send to self
+        INITSTRUCT(sP_FE2CL_PC_VEHICLE_OFF_SUCC, off);
+        sock->sendPacket((void*)&off, P_FE2CL_PC_VEHICLE_OFF_SUCC, sizeof(sP_FE2CL_PC_VEHICLE_OFF_SUCC));
+
+        // send to others
+        INITSTRUCT(sP_FE2CL_PC_STATE_CHANGE, chg);
+        chg.iPC_ID = plr->iID;
+        chg.iState = plr->iPCState;
+        PlayerManager::sendToViewable(sock, (void*)&chg, P_FE2CL_PC_STATE_CHANGE, sizeof(sP_FE2CL_PC_STATE_CHANGE));
+    }
 
     // std::cerr << "Warped to Map Num:" << Warps[warpId].instanceID << " NPC ID " << Warps[warpId].npcID << std::endl;
     if (Warps[warpId].isInstance) {
@@ -569,7 +582,20 @@ void NPCManager::handleWarp(CNSocket* sock, int32_t warpId) {
                 otherPlr->recallInstance = instanceID;
 
                 // remove their vehicle if they're on one
-                otherPlr->iPCState &= ~8;
+                if (otherPlr->iPCState | 8) {
+                    // remove the player's vehicle
+                    otherPlr->iPCState &= ~8;
+
+                    // send to self
+                    INITSTRUCT(sP_FE2CL_PC_VEHICLE_OFF_SUCC, off);
+                    sockTo->sendPacket((void*)&off, P_FE2CL_PC_VEHICLE_OFF_SUCC, sizeof(sP_FE2CL_PC_VEHICLE_OFF_SUCC));
+
+                    // send to others
+                    INITSTRUCT(sP_FE2CL_PC_STATE_CHANGE, chg);
+                    chg.iPC_ID = otherPlr->iID;
+                    chg.iState = otherPlr->iPCState;
+                    PlayerManager::sendToViewable(sockTo, (void*)&chg, P_FE2CL_PC_STATE_CHANGE, sizeof(sP_FE2CL_PC_STATE_CHANGE));
+                }
 
                 PlayerManager::sendPlayerTo(sockTo, Warps[warpId].x, Warps[warpId].y, Warps[warpId].z, instanceID);
             }
@@ -586,8 +612,13 @@ void NPCManager::handleWarp(CNSocket* sock, int32_t warpId) {
         plr->instanceID = INSTANCE_OVERWORLD;
         MissionManager::failInstancedMissions(sock); // fail any instanced missions
         sock->sendPacket((void*)&resp, P_FE2CL_REP_PC_WARP_USE_NPC_SUCC, sizeof(sP_FE2CL_REP_PC_WARP_USE_NPC_SUCC));
+
         ChunkManager::updatePlayerChunk(sock, plr->chunkPos, std::make_tuple(0, 0, 0)); // force player to reload chunks
         PlayerManager::updatePlayerPosition(sock, resp.iX, resp.iY, resp.iZ, INSTANCE_OVERWORLD, plr->angle);
+
+        // remove the player's ongoing race, if any
+        if (RacingManager::EPRaces.find(sock) != RacingManager::EPRaces.end())
+            RacingManager::EPRaces.erase(sock);
     }
 }
 

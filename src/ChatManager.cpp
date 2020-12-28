@@ -371,10 +371,23 @@ void instanceCommand(std::string full, std::vector<std::string>& args, CNSocket*
     // move player to specified instance
     // validate instance ID
     char* instanceS;
-    int instance = std::strtol(args[1].c_str(), &instanceS, 10);
+    uint64_t instance = std::strtoll(args[1].c_str(), &instanceS, 10);
     if (*instanceS) {
         ChatManager::sendServerMessage(sock, "[INST] Invalid instance ID: " + args[1]);
         return;
+    }
+
+    if (args.size() >= 3) {
+        char* playeridS;
+        uint64_t playerid = std::strtoll(args[2].c_str(), &playeridS, 10);
+
+        if (playerid != 0) {
+            instance |= playerid << 32ULL;
+            ChunkManager::createInstance(instance);
+
+            // a precaution
+            plr->recallInstance = 0;
+        }
     }
 
     PlayerManager::sendPlayerTo(sock, plr->x, plr->y, plr->z, instance);
@@ -779,6 +792,16 @@ void redeemCommand(std::string full, std::vector<std::string>& args, CNSocket* s
     ChatManager::sendServerMessage(sock, msg);
 }
 
+void unwarpableCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
+    Player *plr = PlayerManager::getPlayer(sock);
+    plr->unwarpable = true;
+}
+
+void warpableCommand(std::string full, std::vector<std::string>& args, CNSocket* sock) {
+    Player *plr = PlayerManager::getPlayer(sock);
+    plr->unwarpable = false;
+}
+
 void ChatManager::init() {
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_SEND_FREECHAT_MESSAGE, chatHandler);
     REGISTER_SHARD_PACKET(P_CL2FE_REQ_PC_AVATAR_EMOTES_CHAT, emoteHandler);
@@ -811,6 +834,8 @@ void ChatManager::init() {
     registerCommand("lair", 50, lairUnlockCommand, "get the required mission for the nearest fusion lair");
     registerCommand("hide", 100, hideCommand, "hide yourself from the global player map");
     registerCommand("unhide", 100, unhideCommand, "un-hide yourself from the global player map");
+    registerCommand("unwarpable", 100, unwarpableCommand, "prevent buddies from warping to you");
+    registerCommand("warpable", 100, warpableCommand, "re-allow buddies to warp to you");
     registerCommand("redeem", 100, redeemCommand, "redeem a code item");
 }
 
