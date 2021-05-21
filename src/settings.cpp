@@ -5,6 +5,7 @@
 // so we get the ACADEMY definition
 #include "core/CNStructs.hpp"
 
+#pragma region Default
 // defaults :)
 int settings::VERBOSITY = 1;
 
@@ -62,6 +63,12 @@ int settings::MONITORINTERVAL = 5000;
 // event mode settings
 int settings::EVENTMODE = 0;
 
+#pragma endregion
+
+#pragma Customizations
+bool settings::DISABLEANTICHEAT = true;
+#pragma endregion
+
 void settings::init() {
     INIReader reader("config.ini");
 
@@ -105,4 +112,5 @@ void settings::init() {
     MONITORENABLED = reader.GetBoolean("monitor", "enabled", MONITORENABLED);
     MONITORPORT = reader.GetInteger("monitor", "port", MONITORPORT);
     MONITORINTERVAL = reader.GetInteger("monitor", "interval", MONITORINTERVAL);
+    DISABLEANTICHEAT = reader.GetBoolean("shard", "disableanticheat", MONITORINTERVAL);
 }

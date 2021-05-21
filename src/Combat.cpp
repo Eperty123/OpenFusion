@@ -17,10 +17,10 @@ using namespace Combat;
 /// Player Id -> Bullet Id -> Bullet
 std::map<int32_t, std::map<int8_t, Bullet>> Combat::Bullets;
 
-static std::pair<int,int> getDamage(int attackPower, int defensePower, bool shouldCrit,
-                                         bool batteryBoost, int attackerStyle,
-                                         int defenderStyle, int difficulty) {
-    std::pair<int,int> ret = {0, 1};
+static std::pair<int, int> getDamage(int attackPower, int defensePower, bool shouldCrit,
+    bool batteryBoost, int attackerStyle,
+    int defenderStyle, int difficulty) {
+    std::pair<int, int> ret = { 0, 1 };
     if (attackPower + defensePower * 2 == 0)
         return ret;
 
@@ -56,37 +56,41 @@ static std::pair<int,int> getDamage(int attackPower, int defensePower, bool shou
     return ret;
 }
 
-static void pcAttackNpcs(CNSocket *sock, CNPacketData *data) {
+static void pcAttackNpcs(CNSocket* sock, CNPacketData* data) {
     auto pkt = (sP_CL2FE_REQ_PC_ATTACK_NPCs*)data->buf;
-    Player *plr = PlayerManager::getPlayer(sock);
+    Player* plr = PlayerManager::getPlayer(sock);
     auto targets = (int32_t*)data->trailers;
 
     // rapid fire anti-cheat
     // TODO: move this out of here, when generalizing packet frequency validation
-    time_t currTime = getTime();
-    if (currTime - plr->lastShot < plr->fireRate * 80)
-        plr->suspicionRating += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
-    else if (currTime - plr->lastShot < plr->fireRate * 180 && plr->suspicionRating > 0)
-        plr->suspicionRating += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
+    // Only check if anti cheat is turned on
 
-    plr->lastShot = currTime;
+    if (!settings::DISABLEANTICHEAT) {
+        time_t currTime = getTime();
+        if (currTime - plr->lastShot < plr->fireRate * 80)
+            plr->suspicionRating += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
+        else if (currTime - plr->lastShot < plr->fireRate * 180 && plr->suspicionRating > 0)
+            plr->suspicionRating += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
 
-    if (pkt->iNPCCnt > 3) // 3+ targets should never be possible
-        plr->suspicionRating += 10000;
+        plr->lastShot = currTime;
 
-    if (plr->suspicionRating > 10000) // kill the socket when the player is too suspicious
-        sock->kill();
+        if (pkt->iNPCCnt > 3) // 3+ targets should never be possible
+            plr->suspicionRating += 10000;
 
-    /*
-     * IMPORTANT: This validates memory safety in addition to preventing
-     * ordinary cheating. If the client sends a very large number of trailing
-     * values, it could overflow the *response* buffer, which isn't otherwise
-     * being validated anymore.
-     */
-    if (pkt->iNPCCnt > 3) {
-        std::cout << "[WARN] Player tried to attack more than 3 NPCs at once" << std::endl;
-        return;
-    }
+        if (plr->suspicionRating > 10000) // kill the socket when the player is too suspicious
+            sock->kill();
+
+        /*
+         * IMPORTANT: This validates memory safety in addition to preventing
+         * ordinary cheating. If the client sends a very large number of trailing
+         * values, it could overflow the *response* buffer, which isn't otherwise
+         * being validated anymore.
+         */
+        if (pkt->iNPCCnt > 3) {
+            std::cout << "[WARN] Player tried to attack more than 3 NPCs at once" << std::endl;
+            return;
+        }
+    } else std::cout << "[WARN] Player is using rapid fire!" << std::endl;
 
     INITVARPACKET(respbuf, sP_FE2CL_PC_ATTACK_NPCs_SUCC, resp, sAttackResult, respdata);
 
@@ -108,7 +112,7 @@ static void pcAttackNpcs(CNSocket *sock, CNPacketData *data) {
 
         Mob* mob = (Mob*)npc;
 
-        std::pair<int,int> damage;
+        std::pair<int, int> damage;
 
         if (pkt->iNPCCnt > 1)
             damage.first = plr->groupDamage;
@@ -137,7 +141,7 @@ static void pcAttackNpcs(CNSocket *sock, CNPacketData *data) {
 
     // a bit of a hack: these are the same size, so we can reuse the response packet
     assert(sizeof(sP_FE2CL_PC_ATTACK_NPCs_SUCC) == sizeof(sP_FE2CL_PC_ATTACK_NPCs));
-    auto *resp1 = (sP_FE2CL_PC_ATTACK_NPCs*)respbuf;
+    auto* resp1 = (sP_FE2CL_PC_ATTACK_NPCs*)respbuf;
 
     resp1->iPC_ID = plr->iID;
 
@@ -145,8 +149,8 @@ static void pcAttackNpcs(CNSocket *sock, CNPacketData *data) {
     PlayerManager::sendToViewable(sock, respbuf, P_FE2CL_PC_ATTACK_NPCs);
 }
 
-void Combat::npcAttackPc(Mob *mob, time_t currTime) {
-    Player *plr = PlayerManager::getPlayer(mob->target);
+void Combat::npcAttackPc(Mob* mob, time_t currTime) {
+    Player* plr = PlayerManager::getPlayer(mob->target);
 
     INITVARPACKET(respbuf, sP_FE2CL_NPC_ATTACK_PCs, pkt, sAttackResult, atk);
 
@@ -177,7 +181,7 @@ void Combat::npcAttackPc(Mob *mob, time_t currTime) {
     }
 }
 
-int Combat::hitMob(CNSocket *sock, Mob *mob, int damage) {
+int Combat::hitMob(CNSocket* sock, Mob* mob, int damage) {
     // cannot kill mobs multiple times; cannot harm retreating mobs
     if (mob->state != MobState::ROAMING && mob->state != MobState::COMBAT) {
         return 0; // no damage
@@ -213,7 +217,7 @@ int Combat::hitMob(CNSocket *sock, Mob *mob, int damage) {
     return damage;
 }
 
-void Combat::killMob(CNSocket *sock, Mob *mob) {
+void Combat::killMob(CNSocket* sock, Mob* mob) {
     mob->state = MobState::DEAD;
     mob->target = nullptr;
     mob->appearanceData.iConditionBitFlag = 0;
@@ -232,7 +236,8 @@ void Combat::killMob(CNSocket *sock, Mob *mob) {
         if (plr->groupCnt == 1 && plr->iIDGroup == plr->iID) {
             Items::giveMobDrop(sock, mob, rolled, eventRolled);
             Missions::mobKilled(sock, mob->appearanceData.iNPCType, rolledQItem);
-        } else {
+        }
+        else {
             Player* otherPlayer = PlayerManager::getPlayerFromID(plr->iIDGroup);
 
             if (otherPlayer == nullptr)
@@ -243,7 +248,7 @@ void Combat::killMob(CNSocket *sock, Mob *mob) {
                 if (sockTo == nullptr)
                     continue;
 
-                Player *otherPlr = PlayerManager::getPlayer(sockTo);
+                Player* otherPlr = PlayerManager::getPlayer(sockTo);
 
                 // only contribute to group members' kills if they're close enough
                 int dist = std::hypot(plr->x - otherPlr->x + 1, plr->y - otherPlr->y + 1);
@@ -281,13 +286,14 @@ void Combat::killMob(CNSocket *sock, Mob *mob) {
             queue.pop();
             queue.push(point);
         }
-    } else {
+    }
+    else {
         Transport::NPCQueues.erase(mob->appearanceData.iNPC_ID);
     }
 }
 
-static void combatBegin(CNSocket *sock, CNPacketData *data) {
-    Player *plr = PlayerManager::getPlayer(sock);
+static void combatBegin(CNSocket* sock, CNPacketData* data) {
+    Player* plr = PlayerManager::getPlayer(sock);
 
     plr->inCombat = true;
 
@@ -301,16 +307,16 @@ static void combatBegin(CNSocket *sock, CNPacketData *data) {
     PlayerManager::sendToViewable(sock, (void*)&resp, P_FE2CL_PC_EQUIP_CHANGE, sizeof(sP_FE2CL_PC_EQUIP_CHANGE));
 }
 
-static void combatEnd(CNSocket *sock, CNPacketData *data) {
-    Player *plr = PlayerManager::getPlayer(sock);
+static void combatEnd(CNSocket* sock, CNPacketData* data) {
+    Player* plr = PlayerManager::getPlayer(sock);
 
     plr->inCombat = false;
     plr->healCooldown = 4000;
 }
 
-static void dotDamageOnOff(CNSocket *sock, CNPacketData *data) {
-    sP_CL2FE_DOT_DAMAGE_ONOFF *pkt = (sP_CL2FE_DOT_DAMAGE_ONOFF*)data->buf;
-    Player *plr = PlayerManager::getPlayer(sock);
+static void dotDamageOnOff(CNSocket* sock, CNPacketData* data) {
+    sP_CL2FE_DOT_DAMAGE_ONOFF* pkt = (sP_CL2FE_DOT_DAMAGE_ONOFF*)data->buf;
+    Player* plr = PlayerManager::getPlayer(sock);
 
     if ((plr->iConditionBitFlag & CSB_BIT_INFECTION) != (bool)pkt->iFlag)
         plr->iConditionBitFlag ^= CSB_BIT_INFECTION;
@@ -325,16 +331,16 @@ static void dotDamageOnOff(CNSocket *sock, CNPacketData *data) {
     sock->sendPacket((void*)&pkt1, P_FE2CL_PC_BUFF_UPDATE, sizeof(sP_FE2CL_PC_BUFF_UPDATE));
 }
 
-static void dealGooDamage(CNSocket *sock, int amount) {
+static void dealGooDamage(CNSocket* sock, int amount) {
     size_t resplen = sizeof(sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK) + sizeof(sSkillResult_DotDamage);
     assert(resplen < CN_PACKET_BUFFER_SIZE - 8);
     uint8_t respbuf[CN_PACKET_BUFFER_SIZE];
-    Player *plr = PlayerManager::getPlayer(sock);
+    Player* plr = PlayerManager::getPlayer(sock);
 
     memset(respbuf, 0, resplen);
 
-    sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK *pkt = (sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK*)respbuf;
-    sSkillResult_DotDamage *dmg = (sSkillResult_DotDamage*)(respbuf + sizeof(sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK));
+    sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK* pkt = (sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK*)respbuf;
+    sSkillResult_DotDamage* dmg = (sSkillResult_DotDamage*)(respbuf + sizeof(sP_FE2CL_CHAR_TIME_BUFF_TIME_TICK));
 
     if (plr->iConditionBitFlag & CSB_BIT_PROTECT_INFECTION) {
         amount = -2; // -2 is the magic number for "Protected" to appear as the damage number
@@ -343,7 +349,8 @@ static void dealGooDamage(CNSocket *sock, int amount) {
         // eggs allow protection without nanos
         if (plr->activeNano != -1 && (plr->iSelfConditionBitFlag & CSB_BIT_PROTECT_INFECTION))
             plr->Nanos[plr->activeNano].iStamina -= 3;
-    } else {
+    }
+    else {
         plr->HP -= amount;
     }
 
@@ -371,9 +378,9 @@ static void dealGooDamage(CNSocket *sock, int amount) {
     PlayerManager::sendToViewable(sock, (void*)&respbuf, P_FE2CL_CHAR_TIME_BUFF_TIME_TICK, resplen);
 }
 
-static void pcAttackChars(CNSocket *sock, CNPacketData *data) {
+static void pcAttackChars(CNSocket* sock, CNPacketData* data) {
     sP_CL2FE_REQ_PC_ATTACK_CHARs* pkt = (sP_CL2FE_REQ_PC_ATTACK_CHARs*)data->buf;
-    Player *plr = PlayerManager::getPlayer(sock);
+    Player* plr = PlayerManager::getPlayer(sock);
 
     // only GMs can use this this variant
     if (plr->accountLevel > 30)
@@ -385,7 +392,7 @@ static void pcAttackChars(CNSocket *sock, CNPacketData *data) {
         return;
     }
 
-    int32_t *pktdata = (int32_t*)((uint8_t*)data->buf + sizeof(sP_CL2FE_REQ_PC_ATTACK_CHARs));
+    int32_t* pktdata = (int32_t*)((uint8_t*)data->buf + sizeof(sP_CL2FE_REQ_PC_ATTACK_CHARs));
 
     if (!validOutVarPacket(sizeof(sP_FE2CL_PC_ATTACK_CHARs_SUCC), pkt->iTargetCnt, sizeof(sAttackResult))) {
         std::cout << "[WARN] bad sP_FE2CL_PC_ATTACK_CHARs_SUCC packet size\n";
@@ -398,17 +405,17 @@ static void pcAttackChars(CNSocket *sock, CNPacketData *data) {
 
     memset(respbuf, 0, resplen);
 
-    sP_FE2CL_PC_ATTACK_CHARs_SUCC *resp = (sP_FE2CL_PC_ATTACK_CHARs_SUCC*)respbuf;
-    sAttackResult *respdata = (sAttackResult*)(respbuf+sizeof(sP_FE2CL_PC_ATTACK_CHARs_SUCC));
+    sP_FE2CL_PC_ATTACK_CHARs_SUCC* resp = (sP_FE2CL_PC_ATTACK_CHARs_SUCC*)respbuf;
+    sAttackResult* respdata = (sAttackResult*)(respbuf + sizeof(sP_FE2CL_PC_ATTACK_CHARs_SUCC));
 
     resp->iTargetCnt = pkt->iTargetCnt;
 
     for (int i = 0; i < pkt->iTargetCnt; i++) {
-        if (pktdata[i*2+1] == 1) { // eCT == 1; attack player
-            Player *target = nullptr;
+        if (pktdata[i * 2 + 1] == 1) { // eCT == 1; attack player
+            Player* target = nullptr;
 
             for (auto& pair : PlayerManager::players) {
-                if (pair.second->iID == pktdata[i*2]) {
+                if (pair.second->iID == pktdata[i * 2]) {
                     target = pair.second;
                     break;
                 }
@@ -420,7 +427,7 @@ static void pcAttackChars(CNSocket *sock, CNPacketData *data) {
                 return;
             }
 
-            std::pair<int,int> damage;
+            std::pair<int, int> damage;
 
             if (pkt->iTargetCnt > 1)
                 damage.first = plr->groupDamage;
@@ -436,13 +443,14 @@ static void pcAttackChars(CNSocket *sock, CNPacketData *data) {
 
             target->HP -= damage.first;
 
-            respdata[i].eCT = pktdata[i*2+1];
+            respdata[i].eCT = pktdata[i * 2 + 1];
             respdata[i].iID = target->iID;
             respdata[i].iDamage = damage.first;
             respdata[i].iHP = target->HP;
             respdata[i].iHitFlag = damage.second; // hitscan, not a rocket or a grenade
-        } else { // eCT == 4; attack mob
-            if (NPCManager::NPCs.find(pktdata[i*2]) == NPCManager::NPCs.end()) {
+        }
+        else { // eCT == 4; attack mob
+            if (NPCManager::NPCs.find(pktdata[i * 2]) == NPCManager::NPCs.end()) {
                 // not sure how to best handle this
                 std::cout << "[WARN] pcAttackChars: NPC ID not found" << std::endl;
                 return;
@@ -456,7 +464,7 @@ static void pcAttackChars(CNSocket *sock, CNPacketData *data) {
 
             Mob* mob = (Mob*)npc;
 
-            std::pair<int,int> damage;
+            std::pair<int, int> damage;
 
             if (pkt->iTargetCnt > 1)
                 damage.first = plr->groupDamage;
@@ -475,7 +483,7 @@ static void pcAttackChars(CNSocket *sock, CNPacketData *data) {
 
             damage.first = hitMob(sock, mob, damage.first);
 
-            respdata[i].eCT = pktdata[i*2+1];
+            respdata[i].eCT = pktdata[i * 2 + 1];
             respdata[i].iID = mob->appearanceData.iNPC_ID;
             respdata[i].iDamage = damage.first;
             respdata[i].iHP = mob->appearanceData.iHP;
@@ -487,7 +495,7 @@ static void pcAttackChars(CNSocket *sock, CNPacketData *data) {
 
     // a bit of a hack: these are the same size, so we can reuse the response packet
     assert(sizeof(sP_FE2CL_PC_ATTACK_CHARs_SUCC) == sizeof(sP_FE2CL_PC_ATTACK_CHARs));
-    sP_FE2CL_PC_ATTACK_CHARs *resp1 = (sP_FE2CL_PC_ATTACK_CHARs*)respbuf;
+    sP_FE2CL_PC_ATTACK_CHARs* resp1 = (sP_FE2CL_PC_ATTACK_CHARs*)respbuf;
 
     resp1->iPC_ID = plr->iID;
 
@@ -686,12 +694,12 @@ static void projectileHit(CNSocket* sock, CNPacketData* data) {
     Bullets[plr->iID].erase(resp->iBulletID);
 }
 
-static void playerTick(CNServer *serv, time_t currTime) {
+static void playerTick(CNServer* serv, time_t currTime) {
     static time_t lastHealTime = 0;
 
     for (auto& pair : PlayerManager::players) {
-        CNSocket *sock = pair.first;
-        Player *plr = pair.second;
+        CNSocket* sock = pair.first;
+        Player* plr = pair.second;
         bool transmit = false;
 
         // group ticks
@@ -714,7 +722,8 @@ static void playerTick(CNServer *serv, time_t currTime) {
                 if (plr->HP > PC_MAXHEALTH(plr->level))
                     plr->HP = PC_MAXHEALTH(plr->level);
                 transmit = true;
-            } else
+            }
+            else
                 plr->healCooldown -= 4000;
         }
 
@@ -726,7 +735,8 @@ static void playerTick(CNServer *serv, time_t currTime) {
                     Nanos::summonNano(sock, -1, true); // unsummon nano silently
 
                 transmit = true;
-            } else if (plr->Nanos[plr->equippedNanos[i]].iStamina < 150) { // regain stamina
+            }
+            else if (plr->Nanos[plr->equippedNanos[i]].iStamina < 150) { // regain stamina
                 sNano& nano = plr->Nanos[plr->equippedNanos[i]];
                 nano.iStamina += 1;
 
