@@ -1,20 +1,28 @@
-#include "CNLoginServer.hpp"
-#include "CNShardServer.hpp"
+#include "servers/CNLoginServer.hpp"
+#include "servers/CNShardServer.hpp"
 #include "PlayerManager.hpp"
-#include "ChatManager.hpp"
-#include "MobManager.hpp"
-#include "ItemManager.hpp"
-#include "MissionManager.hpp"
-#include "NanoManager.hpp"
+#include "PlayerMovement.hpp"
+#include "BuiltinCommands.hpp"
+#include "Buddies.hpp"
+#include "CustomCommands.hpp"
+#include "Combat.hpp"
+#include "Items.hpp"
+#include "Missions.hpp"
+#include "Nanos.hpp"
 #include "NPCManager.hpp"
-#include "TransportManager.hpp"
-#include "BuddyManager.hpp"
-#include "Database.hpp"
+#include "Transport.hpp"
+#include "Buddies.hpp"
+#include "db/Database.hpp"
 #include "TableData.hpp"
-#include "ChunkManager.hpp"
-#include "GroupManager.hpp"
-#include "Monitor.hpp"
-#include "RacingManager.hpp"
+#include "Groups.hpp"
+#include "servers/Monitor.hpp"
+#include "Racing.hpp"
+#include "Trading.hpp"
+#include "Email.hpp"
+#include "Vendors.hpp"
+#include "Chat.hpp"
+#include "Eggs.hpp"
+#include "Rand.hpp"
 
 #include "settings.hpp"
 
@@ -49,7 +57,7 @@ void terminate(int arg) {
 
     if (shardServer != nullptr && shardThread != nullptr)
         shardServer->kill();
-    
+
     Database::close();
     exit(0);
 }
@@ -86,24 +94,32 @@ int main() {
 #else
     initsignals();
 #endif
-    srand(getTime());
+    Rand::init(getTime());
     settings::init();
     std::cout << "[INFO] OpenFusion v" GIT_VERSION << std::endl;
     std::cout << "[INFO] Protocol version: " << PROTOCOL_VERSION << std::endl;
     std::cout << "[INFO] Intializing Packet Managers..." << std::endl;
     TableData::init();
     PlayerManager::init();
-    ChatManager::init();
-    MobManager::init();
-    ItemManager::init();
-    MissionManager::init();
-    NanoManager::init();
+    PlayerMovement::init();
+    BuiltinCommands::init();
+    Buddies::init();
+    CustomCommands::init();
+    Combat::init();
+    Chat::init();
+    Items::init();
+    Eggs::init();
+    Missions::init();
+    Nanos::init();
     NPCManager::init();
-    TransportManager::init();
-    BuddyManager::init();
-    GroupManager::init();
-    RacingManager::init();
+    Vendors::init();
+    Transport::init();
+    Buddies::init();
+    Email::init();
+    Groups::init();
+    Racing::init();
     Database::open();
+    Trading::init();
 
     switch (settings::EVENTMODE) {
     case 0: break; // no event
@@ -135,7 +151,8 @@ int main() {
 
 // helper functions
 
-std::string U16toU8(char16_t* src) {
+std::string U16toU8(char16_t* src, size_t max) {
+    src[max-1] = '\0'; // force a NULL terminatorstd::string U16toU8(char16_t* src) {
     try {
         std::wstring_convert<std::codecvt_utf8_utf16<char16_t>,char16_t> convert;
         return convert.to_bytes(src);
