@@ -1,6 +1,9 @@
 #include <iostream>
 #include "settings.hpp"
-#include "contrib/INIReader.hpp"
+#include "INIReader.hpp"
+
+// so we get the ACADEMY definition
+#include "core/CNStructs.hpp"
 
 // defaults :)
 int settings::VERBOSITY = 1;
@@ -17,33 +20,36 @@ bool settings::SIMULATEMOBS = true;
 
 // default spawn point
 #ifndef ACADEMY
-// Sector V (future)
+// Sector V (The Future)
 int settings::SPAWN_X = 632032;
 int settings::SPAWN_Y = 187177;
 int settings::SPAWN_Z = -5500;
 #else
+// Null Void (Training Area)
 int settings::SPAWN_X = 19835;
 int settings::SPAWN_Y = 108682;
 int settings::SPAWN_Z = 8450;
 #endif
-
 int settings::SPAWN_ANGLE = 130;
-std::string settings::NPCJSON = "tdata/NPCs.json";
-std::string settings::MOBJSON = "tdata/mobs.json";
-std::string settings::PATHJSON = "tdata/paths.json";
-std::string settings::EGGSJSON = "tdata/eggs.json";
-std::string settings::GRUNTWORKJSON = "tdata/gruntwork.json";
-std::string settings::MOTDSTRING = "Welcome to OpenFusion!";
-std::string settings::DBPATH = "database.db";
-std::string settings::ACADEMYJSON = "tdata/1013/academy.json";
 
-#if PROTOCOL_VERSION == 1013
-std::string settings::XDTJSON = "tdata/1013/xdt.json";
-std::string settings::DROPSJSON = "tdata/1013/drops.json";
+std::string settings::DBPATH = "database.db";
+std::string settings::TDATADIR = "tdata/";
+std::string settings::PATCHDIR = "tdata/patch/";
+
+std::string settings::NPCJSON = "NPCs.json";
+std::string settings::MOBJSON = "mobs.json";
+std::string settings::EGGSJSON = "eggs.json";
+std::string settings::GRUNTWORKJSON = "gruntwork.json";
+std::string settings::MOTDSTRING = "Welcome to OpenFusion!";
+std::string settings::DROPSJSON = "drops.json";
+std::string settings::PATHJSON = "paths.json";
+#ifdef ACADEMY
+std::string settings::XDTJSON = "xdt1013.json";
+std::string settings::ENABLEDPATCHES = "1013";
 #else
-std::string settings::DROPSJSON = "tdata/drops.json";
-std::string settings::XDTJSON = "tdata/xdt.json";
-#endif
+std::string settings::XDTJSON = "xdt.json";
+std::string settings::ENABLEDPATCHES = "";
+#endif // ACADEMY
 
 int settings::ACCLEVEL = 1;
 bool settings::DISABLEFIRSTUSEFLAG = true;
@@ -55,7 +61,6 @@ int settings::MONITORINTERVAL = 5000;
 
 // event mode settings
 int settings::EVENTMODE = 0;
-int settings::EVENTCRATECHANCE = 10;
 
 void settings::init() {
     INIReader reader("config.ini");
@@ -85,16 +90,17 @@ void settings::init() {
     NPCJSON = reader.Get("shard", "npcdata", NPCJSON);
     XDTJSON = reader.Get("shard", "xdtdata", XDTJSON);
     MOBJSON = reader.Get("shard", "mobdata", MOBJSON);
-    ACADEMYJSON = reader.Get("shard", "academydata", ACADEMYJSON);
     DROPSJSON = reader.Get("shard", "dropdata", DROPSJSON);
     EGGSJSON = reader.Get("shard", "eggdata", EGGSJSON);
     PATHJSON = reader.Get("shard", "pathdata", PATHJSON);
     GRUNTWORKJSON = reader.Get("shard", "gruntwork", GRUNTWORKJSON);
     MOTDSTRING = reader.Get("shard", "motd", MOTDSTRING);
     DBPATH = reader.Get("shard", "dbpath", DBPATH);
+    TDATADIR = reader.Get("shard", "tdatadir", TDATADIR);
+    PATCHDIR = reader.Get("shard", "patchdir", PATCHDIR);
+    ENABLEDPATCHES = reader.Get("shard", "enabledpatches", ENABLEDPATCHES);
     ACCLEVEL = reader.GetInteger("shard", "accountlevel", ACCLEVEL);
     EVENTMODE = reader.GetInteger("shard", "eventmode", EVENTMODE);
-    EVENTCRATECHANCE = reader.GetInteger("shard", "eventcratechance", EVENTCRATECHANCE);
     DISABLEFIRSTUSEFLAG = reader.GetBoolean("shard", "disablefirstuseflag", DISABLEFIRSTUSEFLAG);
     MONITORENABLED = reader.GetBoolean("monitor", "enabled", MONITORENABLED);
     MONITORPORT = reader.GetInteger("monitor", "port", MONITORPORT);
