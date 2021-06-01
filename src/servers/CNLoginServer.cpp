@@ -136,8 +136,6 @@ void CNLoginServer::login(CNSocket* sock, CNPacketData* data) {
     // Create if web api is not used.
     if (findUser.AccountID == 0 && !settings::USEWEBAPI)
         return newAccount(sock, userLogin, userPassword, login->iClientVerC);
-    // If so return a login error.
-    else return loginFail(LoginError::LOGIN_ERROR, userLogin, sock);
 
 
     if (!CNLoginServer::isPasswordCorrect(findUser.Password, userPassword))
