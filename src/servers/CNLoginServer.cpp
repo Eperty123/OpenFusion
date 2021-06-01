@@ -20,50 +20,50 @@ void CNLoginServer::handlePacket(CNSocket* sock, CNPacketData* data) {
     printPacket(data);
 
     switch (data->type) {
-        case P_CL2LS_REQ_LOGIN: {
-            login(sock, data);
-            break;
-        }
-        case P_CL2LS_REP_LIVE_CHECK: {
-            loginSessions[sock].lastHeartbeat = getTime();
-            break;
-        }
-        case P_CL2LS_REQ_CHECK_CHAR_NAME: {
-            nameCheck(sock, data);
-            break;
-        }
-        case P_CL2LS_REQ_SAVE_CHAR_NAME: {
-            nameSave(sock, data);
-            break;
-        }
-        case P_CL2LS_REQ_CHAR_CREATE: {
-            characterCreate(sock, data);
-            break;
-        }
-        case P_CL2LS_REQ_CHAR_DELETE: {
-            characterDelete(sock, data);
-            break;
-        }
-        case P_CL2LS_REQ_CHAR_SELECT: {
-            characterSelect(sock, data);
-            break;
-        }
-        case P_CL2LS_REQ_SAVE_CHAR_TUTOR: {
-            finishTutorial(sock, data);
-            break;
-        }
-        case P_CL2LS_REQ_CHANGE_CHAR_NAME: {
-            changeName(sock, data);
-            break;
-        }
-        case P_CL2LS_REQ_PC_EXIT_DUPLICATE:{
-            duplicateExit(sock, data);
-            break;
-        }
-        default:
-            if (settings::VERBOSITY)
-                std::cerr << "OpenFusion: LOGIN UNIMPLM ERR. PacketType: " << Packets::p2str(data->type) << " (" << data->type << ")" << std::endl;
-            break;
+    case P_CL2LS_REQ_LOGIN: {
+        login(sock, data);
+        break;
+    }
+    case P_CL2LS_REP_LIVE_CHECK: {
+        loginSessions[sock].lastHeartbeat = getTime();
+        break;
+    }
+    case P_CL2LS_REQ_CHECK_CHAR_NAME: {
+        nameCheck(sock, data);
+        break;
+    }
+    case P_CL2LS_REQ_SAVE_CHAR_NAME: {
+        nameSave(sock, data);
+        break;
+    }
+    case P_CL2LS_REQ_CHAR_CREATE: {
+        characterCreate(sock, data);
+        break;
+    }
+    case P_CL2LS_REQ_CHAR_DELETE: {
+        characterDelete(sock, data);
+        break;
+    }
+    case P_CL2LS_REQ_CHAR_SELECT: {
+        characterSelect(sock, data);
+        break;
+    }
+    case P_CL2LS_REQ_SAVE_CHAR_TUTOR: {
+        finishTutorial(sock, data);
+        break;
+    }
+    case P_CL2LS_REQ_CHANGE_CHAR_NAME: {
+        changeName(sock, data);
+        break;
+    }
+    case P_CL2LS_REQ_PC_EXIT_DUPLICATE: {
+        duplicateExit(sock, data);
+        break;
+    }
+    default:
+        if (settings::VERBOSITY)
+            std::cerr << "OpenFusion: LOGIN UNIMPLM ERR. PacketType: " << Packets::p2str(data->type) << " (" << data->type << ")" << std::endl;
+        break;
         /*
          * Unimplemented CL2LS packets:
          *  P_CL2LS_REQ_SHARD_SELECT - we skip it in char select
@@ -86,7 +86,7 @@ void loginFail(LoginError errorCode, std::string userLogin, CNSocket* sock) {
         std::cout << "Login Server: Login fail. Error code " << (int)errorCode << std::endl;
     )
 
-    return;
+        return;
 }
 
 void CNLoginServer::login(CNSocket* sock, CNPacketData* data) {
@@ -119,7 +119,7 @@ void CNLoginServer::login(CNSocket* sock, CNPacketData* data) {
         INITSTRUCT(sP_FE2CL_GM_REP_PC_ANNOUNCE, msg);
         std::string text = "Invalid login or password\n";
         text += "Login has to be 4 - 32 characters long and can't contain special characters other than dash and underscore\n";
-        text += "Password has to be 8 - 32 characters long";          
+        text += "Password has to be 8 - 32 characters long";
         U8toU16(text, msg.szAnnounceMsg, sizeof(msg.szAnnounceMsg));
         msg.iDuringTime = 15;
         sock->sendPacket(msg, P_FE2CL_GM_REP_PC_ANNOUNCE);
@@ -127,14 +127,18 @@ void CNLoginServer::login(CNSocket* sock, CNPacketData* data) {
         // we still have to send login fail to prevent softlock
         return loginFail(LoginError::LOGIN_ERROR, userLogin, sock);
     }
-        
+
 
     Database::Account findUser = {};
     Database::findAccount(&findUser, userLogin);
-    
+
     // account was not found
-    if (findUser.AccountID == 0)
+    // Create if web api is not used.
+    if (findUser.AccountID == 0 && !settings::USEWEBAPI)
         return newAccount(sock, userLogin, userPassword, login->iClientVerC);
+    // If so return a login error.
+    else return loginFail(LoginError::LOGIN_ERROR, userLogin, sock);
+
 
     if (!CNLoginServer::isPasswordCorrect(findUser.Password, userPassword))
         return loginFail(LoginError::ID_AND_PASSWORD_DO_NOT_MATCH, userLogin, sock);
@@ -145,7 +149,7 @@ void CNLoginServer::login(CNSocket* sock, CNPacketData* data) {
         INITSTRUCT(sP_FE2CL_GM_REP_PC_ANNOUNCE, msg);
 
         // ceiling devision
-        int64_t remainingDays = (findUser.BannedUntil-getTimestamp()) / 86400 + ((findUser.BannedUntil - getTimestamp()) % 86400 != 0);
+        int64_t remainingDays = (findUser.BannedUntil - getTimestamp()) / 86400 + ((findUser.BannedUntil - getTimestamp()) % 86400 != 0);
 
         std::string text = "Your account has been banned. \nReason: ";
         text += findUser.BanReason;
@@ -160,7 +164,7 @@ void CNLoginServer::login(CNSocket* sock, CNPacketData* data) {
         return;
     }
 
-    /* 
+    /*
      * calling this here to timestamp login attempt,
      * in order to make duplicate exit sanity check work
      */
@@ -200,9 +204,9 @@ void CNLoginServer::login(CNSocket* sock, CNPacketData* data) {
     DEBUGLOG(
         std::cout << "Login Server: Login success. Welcome " << userLogin << " [" << loginSessions[sock].userID << "]" << std::endl;
     )
-        
-    if (resp.iCharCount == 0)
-        return;
+
+        if (resp.iCharCount == 0)
+            return;
 
     // now send the characters :)
     std::vector<sP_LS2CL_REP_CHAR_INFO>::iterator it;
@@ -211,13 +215,13 @@ void CNLoginServer::login(CNSocket* sock, CNPacketData* data) {
 
     DEBUGLOG(
         std::string message = "Login Server: Loaded " + std::to_string(resp.iCharCount) + " character";
-        if ((int)resp.iCharCount > 1)
-            message += "s";
-        std::cout << message << std::endl;
+    if ((int)resp.iCharCount > 1)
+        message += "s";
+    std::cout << message << std::endl;
     )
 }
 
-void CNLoginServer::newAccount(CNSocket* sock, std::string userLogin, std::string userPassword, int32_t clientVerC) {   
+void CNLoginServer::newAccount(CNSocket* sock, std::string userLogin, std::string userPassword, int32_t clientVerC) {
     int userID = Database::addAccount(userLogin, userPassword);
     // if query somehow failed
     if (userID == 0)
@@ -280,7 +284,8 @@ void CNLoginServer::nameSave(CNSocket* sock, CNPacketData* data) {
     int errorCode = 0;
     if (!CNLoginServer::isCharacterNameGood(AUTOU16TOU8(save->szFirstName), AUTOU16TOU8(save->szLastName))) {
         errorCode = 4;
-    } else if (!Database::isNameFree(AUTOU16TOU8(save->szFirstName), AUTOU16TOU8(save->szLastName))) {
+    }
+    else if (!Database::isNameFree(AUTOU16TOU8(save->szFirstName), AUTOU16TOU8(save->szLastName))) {
         errorCode = 1;
     }
 
@@ -293,7 +298,7 @@ void CNLoginServer::nameSave(CNSocket* sock, CNPacketData* data) {
             std::cout << "Login Server: name check fail. Error code " << errorCode << std::endl;
         )
 
-        return;
+            return;
     }
 
     if (!Database::isSlotFree(loginSessions[sock].userID, save->iSlotNum))
@@ -307,7 +312,7 @@ void CNLoginServer::nameSave(CNSocket* sock, CNPacketData* data) {
     }
     resp.iSlotNum = save->iSlotNum;
     resp.iGender = save->iGender;
-    
+
     memcpy(resp.szFirstName, save->szFirstName, sizeof(resp.szFirstName));
     memcpy(resp.szLastName, save->szLastName, sizeof(resp.szLastName));
 
@@ -319,8 +324,8 @@ void CNLoginServer::nameSave(CNSocket* sock, CNPacketData* data) {
 
     DEBUGLOG(
         std::cout << "Login Server: new character created" << std::endl;
-        std::cout << "\tSlot: " << (int)save->iSlotNum << std::endl;
-        std::cout << "\tName: " << AUTOU16TOU8(save->szFirstName) << " " << AUTOU16TOU8(save->szLastName) << std::endl;
+    std::cout << "\tSlot: " << (int)save->iSlotNum << std::endl;
+    std::cout << "\tName: " << AUTOU16TOU8(save->szFirstName) << " " << AUTOU16TOU8(save->szLastName) << std::endl;
     )
 }
 
@@ -330,17 +335,17 @@ bool validateCharacterCreation(sP_CL2LS_REQ_CHAR_CREATE* character) {
 
     // check base parameters
     sPCStyle* style = &character->PCStyle;
-    if (!(style->iBody      >= 0 && style->iBody      <= 2   &&
-          style->iEyeColor  >= 1 && style->iEyeColor  <= 5   &&
-          style->iGender    >= 1 && style->iGender    <= 2   &&
-          style->iHairColor >= 1 && style->iHairColor <= 18) &&
-          style->iHeight    >= 0 && style->iHeight    <= 4   &&
-          style->iNameCheck >= 0 && style->iNameCheck <= 2   &&
-          style->iSkinColor >= 1 && style->iSkinColor <= 12)
+    if (!(style->iBody >= 0 && style->iBody <= 2 &&
+        style->iEyeColor >= 1 && style->iEyeColor <= 5 &&
+        style->iGender >= 1 && style->iGender <= 2 &&
+        style->iHairColor >= 1 && style->iHairColor <= 18) &&
+        style->iHeight >= 0 && style->iHeight <= 4 &&
+        style->iNameCheck >= 0 && style->iNameCheck <= 2 &&
+        style->iSkinColor >= 1 && style->iSkinColor <= 12)
         return false;
-            
+
     // facestyle and hairstyle are gender dependent
-    if (!(style->iGender == 1 && style->iFaceStyle >= 1 && style->iFaceStyle <= 5  && style->iHairStyle >= 1  && style->iHairStyle <= 23) &&
+    if (!(style->iGender == 1 && style->iFaceStyle >= 1 && style->iFaceStyle <= 5 && style->iHairStyle >= 1 && style->iHairStyle <= 23) &&
         !(style->iGender == 2 && style->iFaceStyle >= 6 && style->iFaceStyle <= 10 && style->iHairStyle >= 25 && style->iHairStyle <= 45))
         return false;
 
@@ -371,7 +376,7 @@ void CNLoginServer::characterCreate(CNSocket* sock, CNPacketData* data) {
         std::cout << "[WARN] Login Server: Database failed to finish character creation!" << std::endl;
         return invalidCharacter(sock);
     }
-    
+
     Player player = {};
     Database::getPlayer(&player, character->PCStyle.iPC_UID);
 
@@ -386,25 +391,25 @@ void CNLoginServer::characterCreate(CNSocket* sock, CNPacketData* data) {
     loginSessions[sock].lastHeartbeat = getTime();
 
     sock->sendPacket(resp, P_LS2CL_REP_CHAR_CREATE_SUCC);
-    Database::updateSelected(loginSessions[sock].userID, player.slot);   
+    Database::updateSelected(loginSessions[sock].userID, player.slot);
 
     DEBUGLOG(
         std::cout << "Login Server: Character creation completed" << std::endl;
-        std::cout << "\tPC_UID: " << character->PCStyle.iPC_UID << std::endl;
-        std::cout << "\tNameCheck: " << (int)character->PCStyle.iNameCheck << std::endl;
-        std::cout << "\tName: " << AUTOU16TOU8(character->PCStyle.szFirstName) << " " << AUTOU16TOU8(character->PCStyle.szLastName) << std::endl;
-        std::cout << "\tGender: " << (int)character->PCStyle.iGender << std::endl;
-        std::cout << "\tFace: " << (int)character->PCStyle.iFaceStyle << std::endl;
-        std::cout << "\tHair: " << (int)character->PCStyle.iHairStyle << std::endl;
-        std::cout << "\tHair Color: " << (int)character->PCStyle.iHairColor << std::endl;
-        std::cout << "\tSkin Color: " << (int)character->PCStyle.iSkinColor << std::endl;
-        std::cout << "\tEye Color: " << (int)character->PCStyle.iEyeColor << std::endl;
-        std::cout << "\tHeight: " << (int)character->PCStyle.iHeight << std::endl;
-        std::cout << "\tBody: " << (int)character->PCStyle.iBody << std::endl;
-        std::cout << "\tClass: " << (int)character->PCStyle.iClass << std::endl;
-        std::cout << "\tiEquipUBID: " << (int)character->sOn_Item.iEquipUBID << std::endl;
-        std::cout << "\tiEquipLBID: " << (int)character->sOn_Item.iEquipLBID << std::endl;
-        std::cout << "\tiEquipFootID: " << (int)character->sOn_Item.iEquipFootID << std::endl;
+    std::cout << "\tPC_UID: " << character->PCStyle.iPC_UID << std::endl;
+    std::cout << "\tNameCheck: " << (int)character->PCStyle.iNameCheck << std::endl;
+    std::cout << "\tName: " << AUTOU16TOU8(character->PCStyle.szFirstName) << " " << AUTOU16TOU8(character->PCStyle.szLastName) << std::endl;
+    std::cout << "\tGender: " << (int)character->PCStyle.iGender << std::endl;
+    std::cout << "\tFace: " << (int)character->PCStyle.iFaceStyle << std::endl;
+    std::cout << "\tHair: " << (int)character->PCStyle.iHairStyle << std::endl;
+    std::cout << "\tHair Color: " << (int)character->PCStyle.iHairColor << std::endl;
+    std::cout << "\tSkin Color: " << (int)character->PCStyle.iSkinColor << std::endl;
+    std::cout << "\tEye Color: " << (int)character->PCStyle.iEyeColor << std::endl;
+    std::cout << "\tHeight: " << (int)character->PCStyle.iHeight << std::endl;
+    std::cout << "\tBody: " << (int)character->PCStyle.iBody << std::endl;
+    std::cout << "\tClass: " << (int)character->PCStyle.iClass << std::endl;
+    std::cout << "\tiEquipUBID: " << (int)character->sOn_Item.iEquipUBID << std::endl;
+    std::cout << "\tiEquipLBID: " << (int)character->sOn_Item.iEquipLBID << std::endl;
+    std::cout << "\tiEquipFootID: " << (int)character->sOn_Item.iEquipFootID << std::endl;
     )
 }
 
@@ -435,10 +440,10 @@ void CNLoginServer::characterSelect(CNSocket* sock, CNPacketData* data) {
 
     DEBUGLOG(
         std::cout << "Login Server: Selected character [" << selection->iPC_UID << "]" << std::endl;
-        std::cout << "Connecting to shard server" << std::endl;
+    std::cout << "Connecting to shard server" << std::endl;
     )
 
-    const char* shard_ip = settings::SHARDSERVERIP.c_str();
+        const char* shard_ip = settings::SHARDSERVERIP.c_str();
 
     /*
      * Work around the issue of not being able to connect to a local server if
@@ -504,7 +509,7 @@ void CNLoginServer::changeName(CNSocket* sock, CNPacketData* data) {
             std::cout << "Login Server: name check fail. Error code " << errorCode << std::endl;
         )
 
-        return;
+            return;
     }
 
     if (!Database::changeName(save, loginSessions[sock].userID))
@@ -522,7 +527,7 @@ void CNLoginServer::changeName(CNSocket* sock, CNPacketData* data) {
 
     DEBUGLOG(
         std::cout << "Login Server: Name check success for character [" << save->iPCUID << "]" << std::endl;
-        std::cout << "\tNew name: " << AUTOU16TOU8(save->szFirstName) << " " << AUTOU16TOU8(save->szLastName) << std::endl;     
+    std::cout << "\tNew name: " << AUTOU16TOU8(save->szFirstName) << " " << AUTOU16TOU8(save->szLastName) << std::endl;
     )
 }
 
@@ -552,7 +557,7 @@ void CNLoginServer::killConnection(CNSocket* cns) {
     DEBUGLOG(
         std::cout << "Login Server: Account [" << loginSessions[cns].userID << "] disconnected from login server" << std::endl;
     )
-    loginSessions.erase(cns);
+        loginSessions.erase(cns);
 }
 
 void CNLoginServer::onStep() {

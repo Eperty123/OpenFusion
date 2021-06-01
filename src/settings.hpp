@@ -33,6 +33,7 @@ namespace settings {
     extern int MONITORINTERVAL;
     extern bool DISABLEFIRSTUSEFLAG;
     extern bool DISABLEANTICHEAT;
+    extern bool USEWEBAPI;
 
     void init();
 }

@@ -67,6 +67,7 @@ int settings::EVENTMODE = 0;
 
 #pragma Customizations
 bool settings::DISABLEANTICHEAT = true;
+bool settings::USEWEBAPI = false;
 #pragma endregion
 
 void settings::init() {
@@ -112,5 +113,6 @@ void settings::init() {
     MONITORENABLED = reader.GetBoolean("monitor", "enabled", MONITORENABLED);
     MONITORPORT = reader.GetInteger("monitor", "port", MONITORPORT);
     MONITORINTERVAL = reader.GetInteger("monitor", "interval", MONITORINTERVAL);
-    DISABLEANTICHEAT = reader.GetBoolean("shard", "disableanticheat", MONITORINTERVAL);
+    DISABLEANTICHEAT = reader.GetBoolean("shard", "disableanticheat", DISABLEANTICHEAT);
+    USEWEBAPI = reader.GetBoolean("login", "usewebapi", USEWEBAPI);
 }
