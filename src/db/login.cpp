@@ -114,7 +114,7 @@ bool Database::isNameFree(std::string firstName, std::string lastName) {
 
     sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
     sqlite3_bind_text(stmt, 1, firstName.c_str(), -1, NULL);
-    sqlite3_bind_text(stmt, 2, lastName.c_str(),  -1, NULL);
+    sqlite3_bind_text(stmt, 2, lastName.c_str(), -1, NULL);
     int rc = sqlite3_step(stmt);
 
     bool result = (rc == SQLITE_ROW && sqlite3_column_int(stmt, 0) == 0);
@@ -162,7 +162,7 @@ int Database::createCharacter(sP_CL2LS_REQ_SAVE_CHAR_NAME* save, int AccountID) 
         )";
     sqlite3_stmt* stmt;
     std::string firstName = AUTOU16TOU8(save->szFirstName);
-    std::string lastName =  AUTOU16TOU8(save->szLastName);
+    std::string lastName = AUTOU16TOU8(save->szLastName);
 
     sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
     sqlite3_bind_int(stmt, 1, AccountID);
@@ -252,13 +252,23 @@ bool Database::finishCharacter(sP_CL2LS_REQ_CHAR_CREATE* character, int accountI
         )";
     sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
 
-    sqlite3_bind_int(stmt, 1, character->PCStyle.iBody);
+    //sqlite3_bind_int(stmt, 1, character->PCStyle.iBody);
     sqlite3_bind_int(stmt, 2, character->PCStyle.iEyeColor);
     sqlite3_bind_int(stmt, 3, character->PCStyle.iFaceStyle);
     sqlite3_bind_int(stmt, 4, character->PCStyle.iGender);
     sqlite3_bind_int(stmt, 5, character->PCStyle.iHairColor);
     sqlite3_bind_int(stmt, 6, character->PCStyle.iHairStyle);
+    //sqlite3_bind_int(stmt, 7, character->PCStyle.iHeight);
+
+#ifndef ACADEMY
+    // Hardcoded to be tall. Just my preference since you can't set it.
+    sqlite3_bind_int(stmt, 1, 2);
+    sqlite3_bind_int(stmt, 7, 4);
+#else
+    sqlite3_bind_int(stmt, 1, character->PCStyle.iBody);
     sqlite3_bind_int(stmt, 7, character->PCStyle.iHeight);
+#endif
+
     sqlite3_bind_int(stmt, 8, character->PCStyle.iSkinColor);
     sqlite3_bind_int(stmt, 9, character->PCStyle.iPC_UID);
 
@@ -279,9 +289,9 @@ bool Database::finishCharacter(sP_CL2LS_REQ_CHAR_CREATE* character, int accountI
     int items[3] = { character->sOn_Item.iEquipUBID, character->sOn_Item.iEquipLBID, character->sOn_Item.iEquipFootID };
     for (int i = 0; i < 3; i++) {
         sqlite3_bind_int(stmt, 1, character->PCStyle.iPC_UID);
-        sqlite3_bind_int(stmt, 2, i+1);
+        sqlite3_bind_int(stmt, 2, i + 1);
         sqlite3_bind_int(stmt, 3, items[i]);
-        sqlite3_bind_int(stmt, 4, i+1);
+        sqlite3_bind_int(stmt, 4, i + 1);
 
         if (sqlite3_step(stmt) != SQLITE_DONE) {
             sqlite3_finalize(stmt);
