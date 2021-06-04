@@ -260,7 +260,7 @@ bool Database::finishCharacter(sP_CL2LS_REQ_CHAR_CREATE* character, int accountI
     sqlite3_bind_int(stmt, 6, character->PCStyle.iHairStyle);
     //sqlite3_bind_int(stmt, 7, character->PCStyle.iHeight);
 
-#ifndef ACADEMY
+#ifdef ACADEMY
     // Hardcoded to be tall. Just my preference since you can't set it.
     sqlite3_bind_int(stmt, 1, 2);
     sqlite3_bind_int(stmt, 7, 4);
