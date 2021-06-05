@@ -252,20 +252,21 @@ bool Database::finishCharacter(sP_CL2LS_REQ_CHAR_CREATE* character, int accountI
         )";
     sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
 
-    //sqlite3_bind_int(stmt, 1, character->PCStyle.iBody);
+#ifdef ACADEMY
+    sqlite3_bind_int(stmt, 1, 2);
     sqlite3_bind_int(stmt, 2, character->PCStyle.iEyeColor);
     sqlite3_bind_int(stmt, 3, character->PCStyle.iFaceStyle);
     sqlite3_bind_int(stmt, 4, character->PCStyle.iGender);
     sqlite3_bind_int(stmt, 5, character->PCStyle.iHairColor);
     sqlite3_bind_int(stmt, 6, character->PCStyle.iHairStyle);
-    //sqlite3_bind_int(stmt, 7, character->PCStyle.iHeight);
-
-#ifdef ACADEMY
-    // Hardcoded to be tall. Just my preference since you can't set it.
-    sqlite3_bind_int(stmt, 1, 2);
     sqlite3_bind_int(stmt, 7, 4);
 #else
     sqlite3_bind_int(stmt, 1, character->PCStyle.iBody);
+    sqlite3_bind_int(stmt, 2, character->PCStyle.iEyeColor);
+    sqlite3_bind_int(stmt, 3, character->PCStyle.iFaceStyle);
+    sqlite3_bind_int(stmt, 4, character->PCStyle.iGender);
+    sqlite3_bind_int(stmt, 5, character->PCStyle.iHairColor);
+    sqlite3_bind_int(stmt, 6, character->PCStyle.iHairStyle);
     sqlite3_bind_int(stmt, 7, character->PCStyle.iHeight);
 #endif
 
