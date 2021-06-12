@@ -43,12 +43,15 @@ std::string settings::GRUNTWORKJSON = "gruntwork.json";
 std::string settings::MOTDSTRING = "Welcome to OpenFusion!";
 std::string settings::DROPSJSON = "drops.json";
 std::string settings::PATHJSON = "paths.json";
+
 #ifdef ACADEMY
 std::string settings::XDTJSON = "xdt1013.json";
 std::string settings::ENABLEDPATCHES = "1013";
+
 #elif defined(RETRO)
 std::string settings::XDTJSON = "xdt20200109.json";
 std::string settings::ENABLEDPATCHES = "20200109";
+
 #else
 std::string settings::XDTJSON = "xdt.json";
 std::string settings::ENABLEDPATCHES = "";
@@ -64,6 +67,10 @@ int settings::MONITORINTERVAL = 5000;
 
 // event mode settings
 int settings::EVENTMODE = 0;
+
+// Custom settings
+bool settings::DISABLEANTICHEAT = false;
+bool settings::USEWEBAPI = false;
 
 void settings::init() {
     INIReader reader("config.ini");
@@ -108,4 +115,6 @@ void settings::init() {
     MONITORENABLED = reader.GetBoolean("monitor", "enabled", MONITORENABLED);
     MONITORPORT = reader.GetInteger("monitor", "port", MONITORPORT);
     MONITORINTERVAL = reader.GetInteger("monitor", "interval", MONITORINTERVAL);
+    DISABLEANTICHEAT = reader.GetBoolean("shard", "disableanticheat", DISABLEANTICHEAT);
+    DISABLEANTICHEAT = reader.GetBoolean("login", "usewebapi", USEWEBAPI);
 }

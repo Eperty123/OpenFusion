@@ -51,8 +51,6 @@ static void movePlayer(CNSocket* sock, CNPacketData* data) {
     else
         plr->suspicionRating[0] = 0;
 
-    std::cout << plr->suspicionRating[0] << std::endl;
-
     if (plr->suspicionRating[0] > 15000) {
         sock->kill();
         CNShardServer::_killConnection(sock);

@@ -118,8 +118,8 @@ void CNLoginServer::login(CNSocket* sock, CNPacketData* data) {
         // send a custom error message
         INITSTRUCT(sP_FE2CL_GM_REP_PC_ANNOUNCE, msg);
         std::string text = "Invalid login or password\n";
-        text += "Login has to be 4 - 32 characters long and can't contain special characters other than dash and underscore\n";
-        text += "Password has to be 8 - 32 characters long";          
+        text += "Login has to be 3 - 32 characters long and can't contain special characters other than dash and underscore\n";
+        text += "Password has to be 3 - 32 characters long";          
         U8toU16(text, msg.szAnnounceMsg, sizeof(msg.szAnnounceMsg));
         msg.iDuringTime = 15;
         sock->sendPacket(msg, P_FE2CL_GM_REP_PC_ANNOUNCE);
@@ -133,7 +133,7 @@ void CNLoginServer::login(CNSocket* sock, CNPacketData* data) {
     Database::findAccount(&findUser, userLogin);
     
     // account was not found
-    if (findUser.AccountID == 0)
+    if (findUser.AccountID == 0 && !settings::USEWEBAPI)
         return newAccount(sock, userLogin, userPassword, login->iClientVerC);
 
     if (!CNLoginServer::isPasswordCorrect(findUser.Password, userPassword))
@@ -602,8 +602,8 @@ bool CNLoginServer::exitDuplicate(int accountId) {
 }
 
 bool CNLoginServer::isLoginDataGood(std::string login, std::string password) {
-    std::regex loginRegex("[a-zA-Z0-9_-]{4,32}");
-    std::regex passwordRegex("[a-zA-Z0-9!@#$%^&*()_+]{8,32}");
+    std::regex loginRegex("[a-zA-Z0-9_-]{3,32}");
+    std::regex passwordRegex("[a-zA-Z0-9!@#$%^&*()_+]{3,60}");
 
     return (std::regex_match(login, loginRegex) && std::regex_match(password, passwordRegex));
 }

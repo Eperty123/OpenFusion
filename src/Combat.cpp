@@ -55,49 +55,51 @@ static void pcAttackNpcs(CNSocket *sock, CNPacketData *data) {
     auto pkt = (sP_CL2FE_REQ_PC_ATTACK_NPCs*)data->buf;
     Player *plr = PlayerManager::getPlayer(sock);
     auto targets = (int32_t*)data->trailers;
-
-    // rapid fire anti-cheat
-    // TODO: move this out of here, when generalizing packet frequency validation
     float penalty = 1.0f;
-    time_t currTime = getTime();
-    int suspicion = plr->suspicionRating[1];
 
-    if (currTime - plr->lastShot < plr->fireRate * 80)
-        suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
-    else { 
-        if (currTime - plr->lastShot < plr->fireRate * 180 && suspicion > 0)
-            suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
-        if (suspicion > 5000) // lose suspicion in general when far in
-            suspicion -= 100;
-    }
+    if (!settings::DISABLEANTICHEAT) {
+        // rapid fire anti-cheat
+        // TODO: move this out of here, when generalizing packet frequency validation
+        time_t currTime = getTime();
+        int suspicion = plr->suspicionRating[1];
 
-    plr->lastShot = currTime;
+        if (currTime - plr->lastShot < plr->fireRate * 80)
+            suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
+        else {
+            if (currTime - plr->lastShot < plr->fireRate * 180 && suspicion > 0)
+                suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
+            if (suspicion > 5000) // lose suspicion in general when far in
+                suspicion -= 100;
+        }
 
-    if (suspicion > 0)
-        plr->suspicionRating[1] = suspicion;
-    else
-        plr->suspicionRating[1] = 0;
+        plr->lastShot = currTime;
 
-    if (plr->suspicionRating[1] > 5000) {// penalize the player for possibly cheating
-        penalty -= (plr->suspicionRating[1] - 5000) * 0.0002f;
-        if (penalty < 0) penalty = 0;
-    }
+        if (suspicion > 0)
+            plr->suspicionRating[1] = suspicion;
+        else
+            plr->suspicionRating[1] = 0;
 
-    if (plr->suspicionRating[1] > 15000) { // too much, drop the player
-        sock->kill();
-        CNShardServer::_killConnection(sock);
-        return;
-    }
+        if (plr->suspicionRating[1] > 5000) {// penalize the player for possibly cheating
+            penalty -= (plr->suspicionRating[1] - 5000) * 0.0002f;
+            if (penalty < 0) penalty = 0;
+        }
 
-    /*
-     * IMPORTANT: This validates memory safety in addition to preventing
-     * ordinary cheating. If the client sends a very large number of trailing
-     * values, it could overflow the *response* buffer, which isn't otherwise
-     * being validated anymore.
-     */
-    if (pkt->iNPCCnt > 3) {
-        std::cout << "[WARN] Player tried to attack more than 3 NPCs at once" << std::endl;
-        return;
+        if (plr->suspicionRating[1] > 15000) { // too much, drop the player
+            sock->kill();
+            CNShardServer::_killConnection(sock);
+            return;
+        }
+
+        /*
+         * IMPORTANT: This validates memory safety in addition to preventing
+         * ordinary cheating. If the client sends a very large number of trailing
+         * values, it could overflow the *response* buffer, which isn't otherwise
+         * being validated anymore.
+         */
+        if (pkt->iNPCCnt > 3) {
+            std::cout << "[WARN] Player tried to attack more than 3 NPCs at once" << std::endl;
+            return;
+        }
     }
 
     INITVARPACKET(respbuf, sP_FE2CL_PC_ATTACK_NPCs_SUCC, resp, sAttackResult, respdata);
