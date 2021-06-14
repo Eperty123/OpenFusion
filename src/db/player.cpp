@@ -488,7 +488,8 @@ void Database::updatePlayer(Player *player, std::map<std::pair<int32_t, int32_t>
                 std::cout << "Saved bank slot " << (i + AEQUIP_COUNT + AINVEN_COUNT + it->first.second * 200) << " for playerid " << player->iID << std::endl;
             }
 
-            it = banks->erase(it);
+            std::cout << "Iteration is: " << it->first.first << " and " << it->first.second << std::endl;
+            it++;
         } else {
             it++;
         }
@@ -638,5 +639,7 @@ void Database::getBank(Bank *bank, int id, int activeBank) {
         std::cout << "Loaded bank slot " << slot << " for playerid " << id << std::endl;
     }
 
+    std::cout << "SQL Finalizing address = " << &stmt << std::endl;
     sqlite3_finalize(stmt);
+    std::cout << "Got bank for " << id << std::endl;
 }

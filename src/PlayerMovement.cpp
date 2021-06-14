@@ -38,13 +38,6 @@ static void movePlayer(CNSocket* sock, CNPacketData* data) {
 
     if (moveResponse.iSpeed > speedLimit)
         suspicion += moveResponse.iSpeed - speedLimit + 500;
-    else if (tm - plr->lastMovement < 150)
-        suspicion += (150 - tm + plr->lastMovement) * 10;
-    else if (tm - plr->lastMovement > 250) {
-        int decrease = (tm - plr->lastMovement - 250) * 10;
-        if (decrease > 500) decrease = 500;
-        suspicion -= decrease;
-    }
 
     if (suspicion > 0)
         plr->suspicionRating[0] = suspicion;
@@ -53,11 +46,11 @@ static void movePlayer(CNSocket* sock, CNPacketData* data) {
 
     if (plr->suspicionRating[0] > 15000) {
         sock->kill();
-        CNShardServer::_killConnection(sock);
+        //CNShardServer::_killConnection(sock);
         return;
     }
 
-    plr->lastMovement = tm;
+    plr->movements += 1;
 
     // [gruntwork] check if player has a follower and move it
     //if (TableData::RunningNPCPaths.find(plr->iID) != TableData::RunningNPCPaths.end()) {

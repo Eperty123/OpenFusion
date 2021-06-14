@@ -84,11 +84,11 @@ static void pcAttackNpcs(CNSocket *sock, CNPacketData *data) {
             if (penalty < 0) penalty = 0;
         }
 
-        if (plr->suspicionRating[1] > 15000) { // too much, drop the player
-            sock->kill();
-            CNShardServer::_killConnection(sock);
-            return;
-        }
+		if (plr->suspicionRating[1] > 15000) { // too much, drop the player
+			sock->kill();
+			//CNShardServer::_killConnection(sock);
+			return;
+		}
 
         /*
          * IMPORTANT: This validates memory safety in addition to preventing
@@ -905,6 +905,12 @@ static void playerTick(CNServer *serv, time_t currTime) {
             sock->sendPacket((void*)&dead, P_FE2CL_PC_SUDDEN_DEAD, sizeof(sP_FE2CL_PC_SUDDEN_DEAD));
             PlayerManager::sendToViewable(sock, (void*)&dead, P_FE2CL_PC_SUDDEN_DEAD, sizeof(sP_FE2CL_PC_SUDDEN_DEAD));
         }
+
+        if (plr->movements > 12)
+            plr->suspicionRating[0] += (plr->movements - 12) * 300;
+        else if (plr->movements > 0 && plr->suspicionRating[0] > 100)
+            plr->suspicionRating[0] -= 100;
+        plr->movements = 0;
 
         if (transmit) {
             INITSTRUCT(sP_FE2CL_REP_PC_TICK, pkt);

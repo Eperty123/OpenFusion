@@ -123,11 +123,10 @@ void CNLoginServer::login(CNSocket* sock, CNPacketData* data) {
         U8toU16(text, msg.szAnnounceMsg, sizeof(msg.szAnnounceMsg));
         msg.iDuringTime = 15;
         sock->sendPacket(msg, P_FE2CL_GM_REP_PC_ANNOUNCE);
-
         // we still have to send login fail to prevent softlock
         return loginFail(LoginError::LOGIN_ERROR, userLogin, sock);
     }
-        
+
 
     Database::Account findUser = {};
     Database::findAccount(&findUser, userLogin);
