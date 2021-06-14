@@ -80,6 +80,16 @@ void PlayerManager::removePlayer(CNSocket* key) {
             it++;
     }
 
+    // remove playerbanks
+    auto it2 = Items::TempBank.begin();
+    while (it2 != Items::TempBank.end()) {
+        if (it2->first.first == plr->iID) {
+            it2 = Items::TempBank.erase(it2);
+        }
+        else
+            it2++;
+    }
+
     std::cout << players.size() << " players" << std::endl;
 }
 
