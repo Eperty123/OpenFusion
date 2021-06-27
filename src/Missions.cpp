@@ -33,6 +33,17 @@ static bool isMissionCompleted(Player* player, int missionId) {
    return player->aQuestFlag[row] & (1ULL << column);
 }
 
+static bool isMissionTaken(Player* player, int missionId) {
+    for (int i = 0; i < ACTIVE_MISSION_COUNT; i++) {
+        if (player->tasks[i] != 0) {
+            TaskData& task = *Tasks[player->tasks[i]];
+            if ((int)(task["m_iHMissionID"]) == missionId)
+                return true;
+        }
+    }
+    return false;
+}
+
 int Missions::findQSlot(Player *plr, int id) {
     int i;
 
@@ -219,6 +230,7 @@ static bool endTask(CNSocket *sock, int32_t taskNum, int choice=0) {
 
     // ugly pointer/reference juggling for the sake of operator overloading...
     TaskData& task = *Tasks[taskNum];
+    std::cout << "Player " << plr->iID << " tasks: " << plr->tasks[0] << ", " << plr->tasks[1] << ", "  << plr->tasks[2] << ", "  << plr->tasks[3] << ", "  << plr->tasks[4] << ", "  << plr->tasks[5] << std::endl;
 
     // update player
     int i;
@@ -234,7 +246,7 @@ static bool endTask(CNSocket *sock, int32_t taskNum, int choice=0) {
     }
 
     if (!found) {
-       std::cout << "[WARN] Player tried to end task that isn't in journal?" << std::endl;
+       std::cout << "[WARN] Player tried to end task that isn't in journal? ID: " << taskNum << std::endl;
        return false;
     }
 
@@ -290,6 +302,11 @@ bool Missions::startTask(Player* plr, int TaskID) {
     }
 
     TaskData& task = *Missions::Tasks[TaskID];
+
+    if (isMissionTaken(plr, (int)(task["m_iHMissionID"]))) {
+       std::cout << "[WARN] Player tried to start an already started mission" << std::endl;
+       return false;
+    }
 
     if (task["m_iCTRReqLvMin"] > plr->level) {
        std::cout << "[WARN] Player tried to start a task below their level" << std::endl;
@@ -363,6 +380,7 @@ void Missions::taskStart(CNSocket* sock, int taskNum) {
     if (task["m_iRequireInstanceID"] != 0 && task["m_iRequireInstanceID"] != MAPNUM(plr->instanceID)) {
         int failTaskID = task["m_iFOutgoingTask"];
         if (failTaskID != 0) {
+            std::cout << "Player is out of the instance of: " << taskNum << std::endl;
             Missions::quitTask(sock, taskNum, false);
         }
     }
@@ -423,6 +441,8 @@ static void taskEnd(CNSocket* sock, CNPacketData* data) {
     if (!endTask(sock, missionData->iTaskNum, missionData->iBox1Choice)) {
         return;
     }
+
+    std::cout << "Ending task: " << missionData->iTaskNum << std::endl;
 
     sock->sendPacket((void*)&response, P_FE2CL_REP_PC_TASK_END_SUCC, sizeof(sP_FE2CL_REP_PC_TASK_END_SUCC));
 }
@@ -495,7 +515,7 @@ void Missions::quitTask(CNSocket* sock, int32_t taskNum, bool manual) {
 
         if (plr->groupNPC != 0 && NPCManager::NPCs.find(plr->groupNPC) != NPCManager::NPCs.end()) {
             BaseNPC* npc = NPCManager::NPCs[plr->groupNPC];
-            Groups::kickNpcGroup(sock, npc);
+            Groups::kickNPCFromGroup(sock, npc);
         }
     }
 
@@ -590,14 +610,19 @@ void Missions::mobKilled(CNSocket *sock, int mobid, int rolledQItem) {
                 }
             }
             // drop quest item
-            if (task["m_iCSUItemNumNeeded"][j] != 0 && !isQuestItemFull(sock, task["m_iCSUItemID"][j], task["m_iCSUItemNumNeeded"][j]) ) {
-                bool drop = rolledQItem % 100 < task["m_iSTItemDropRate"][j];
-                if (drop) {
-                    // XXX: are CSUItemID and CSTItemID the same?
-                    dropQuestItem(sock, plr->tasks[i], 1, task["m_iCSUItemID"][j], mobid);
+            if (task["m_iCSUItemNumNeeded"][j] != 0) { 
+                if (!isQuestItemFull(sock, task["m_iCSUItemID"][j], task["m_iCSUItemNumNeeded"][j])) {
+                    bool drop = rolledQItem % 100 < task["m_iSTItemDropRate"][j];
+                    if (drop) {
+                        // XXX: are CSUItemID and CSTItemID the same?
+                        dropQuestItem(sock, plr->tasks[i], 1, task["m_iCSUItemID"][j], mobid);
+                        rolledQItem = 99; // client hates getting more than 1 drop
+                    } else {
+                        // fail to drop (itemID == 0)
+                        dropQuestItem(sock, plr->tasks[i], 1, 0, mobid);
+                    }
                 } else {
-                    // fail to drop (itemID == 0)
-                    dropQuestItem(sock, plr->tasks[i], 1, 0, mobid);
+                    dropQuestItem(sock, plr->tasks[i], 0, task["m_iCSUItemID"][j], mobid);
                 }
             }
         }
@@ -626,6 +651,7 @@ void Missions::failInstancedMissions(CNSocket* sock) {
         if (task->task["m_iRequireInstanceID"] != 0 && task->task["m_iRequireInstanceID"] != MAPNUM(plr->instanceID)) { // mission is instanced
             int failTaskID = task->task["m_iFOutgoingTask"];
             if (failTaskID != 0) {
+                std::cout << "Player is out of the instance of: " << taskNum << std::endl;
                 Missions::quitTask(sock, taskNum, false);
                 //plr->tasks[i] = failTaskID; // this causes the client to freak out and send a dupe task
             }

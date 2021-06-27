@@ -103,7 +103,7 @@ static int choice(const std::vector<int>& weights, int rolled) {
     return currentIndex;
 }
 
-static int getRarity(int crateId, int itemSetId) {
+static int getRarity(int crateId, int itemSetId, int playerGender) {
     Crate& crate = Items::Crates[crateId];
 
     // find rarity ratio
@@ -126,6 +126,14 @@ static int getRarity(int crateId, int itemSetId) {
 
     for (int itemReferenceId : itemSet.itemReferenceIds) {
         if (Items::ItemReferences.find(itemReferenceId) == Items::ItemReferences.end())
+            continue;
+
+        // alter rarity
+        int itemGender = (itemSet.alterGenderMap.find(itemReferenceId) == itemSet.alterGenderMap.end())
+            ? Items::ItemReferences[itemReferenceId].gender
+            : itemSet.alterGenderMap[itemReferenceId];
+
+        if (!itemSet.ignoreGender && itemGender != 0 && itemGender != playerGender)
             continue;
 
         // alter rarity
@@ -337,7 +345,13 @@ static void itemMoveHandler(CNSocket* sock, CNPacketData* data) {
     }
 
     // if equipping an item, validate that it's of the correct type for the slot
+    // also check for levels
     if ((SlotType)itemmove->eTo == SlotType::EQUIP) {
+        Items::Item* itemDat = Items::getItemData(fromItem->iID, fromItem->iType);
+        if (itemDat == nullptr)
+            return;
+        if (itemDat->level > plr->level)
+            return;
         if (fromItem->iType == 10 && itemmove->iToSlotNum != 8)
             return; // vehicle in wrong slot
         else if (fromItem->iType != 10
@@ -707,7 +721,7 @@ static void chestOpenHandler(CNSocket *sock, CNPacketData *data) {
     failing = (validItemSetId == -1);
 
     if (!failing)
-        rarity = getRarity(validCrateId, validItemSetId);
+        rarity = getRarity(validCrateId, validItemSetId, plr->PCStyle.iGender);
     failing = (rarity == -1);
 
     if (!failing)

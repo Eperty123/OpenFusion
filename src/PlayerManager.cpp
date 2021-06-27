@@ -46,7 +46,7 @@ void PlayerManager::removePlayer(CNSocket* key) {
     Player* plr = getPlayer(key);
     uint64_t fromInstance = plr->instanceID;
 
-    Groups::groupKickPlayer(plr);
+    Groups::kickPlayerFromGroup(plr);
 
     // remove player's bullets
     Combat::Bullets.erase(plr->iID);
@@ -367,7 +367,9 @@ static void enterPlayer(CNSocket* sock, CNPacketData* data) {
 
     plr.suspicionRating[0] = 0; // zero out anticheats
     plr.suspicionRating[1] = 0;
-    plr.lastShot = getTime();
+    time_t tm = getTime();
+    plr.lastShot = tm;
+    plr.lastActivity = tm;
 
     sock->setEKey(CNSocketEncryption::createNewKey(response.uiSvrTime, response.iID + 1, response.PCLoadData2CL.iFusionMatter + 1));
     sock->setFEKey(plr.FEKey);
@@ -515,7 +517,7 @@ static void revivePlayer(CNSocket* sock, CNPacketData* data) {
 
     Player *otherPlr = getPlayerFromID(plr->iIDGroup);
     if (otherPlr != nullptr) {
-        int bitFlag = Groups::getGroupFlags(otherPlr);
+        int bitFlag = 0;//Groups::getGroupFlags(otherPlr);
         resp2.PCRegenDataForOtherPC.iConditionBitFlag = plr->iConditionBitFlag = plr->iSelfConditionBitFlag | bitFlag;
 
         resp2.PCRegenDataForOtherPC.iPCState = plr->iPCState;

@@ -15,8 +15,40 @@ static void vendorBuy(CNSocket* sock, CNPacketData* data) {
 
     Items::Item* itemDat = Items::getItemData(req->Item.iID, req->Item.iType);
 
-    if (itemDat == nullptr) {
+    if (req->Item.iID == 0 || itemDat == nullptr) {
         std::cout << "[WARN] Item id " << req->Item.iID << " with type " << req->Item.iType << " not found (buy)" << std::endl;
+        sock->sendPacket(failResp, P_FE2CL_REP_PC_VENDOR_ITEM_BUY_FAIL);
+        return;
+    }
+
+    if (NPCManager::NPCs.find(req->iNPC_ID) == NPCManager::NPCs.end()) {
+        std::cout << "[WARN] Vendor NPC not found" << std::endl;
+        sock->sendPacket(failResp, P_FE2CL_REP_PC_VENDOR_ITEM_BUY_FAIL);
+        return;
+    }
+
+    BaseNPC* npc = NPCManager::NPCs[req->iNPC_ID];
+    int vendor = npc->appearanceData.iNPCType;
+
+    if (Vendors::VendorTables.find(vendor) == Vendors::VendorTables.end()) {
+        std::cout << "[WARN] Player trying to buy from non-existent vendor." << std::endl;
+        sock->sendPacket(failResp, P_FE2CL_REP_PC_VENDOR_ITEM_BUY_FAIL);
+        return;
+    }
+
+    bool failed = true;
+    std::vector<VendorListing> listings = Vendors::VendorTables[vendor];
+
+    for (int i = 0; i < (int)listings.size() && i < 20; i++) { // 20 is the max
+        if (listings[i].iID == 0)
+            continue;
+
+        if (req->Item.iID == listings[i].iID && req->Item.iType == listings[i].type)
+            failed = false;
+    }
+
+    if (failed) {
+        std::cout << "[WARN] Player trying to buy an unsold item. PlayerID: " << plr->iID << std::endl;
         sock->sendPacket(failResp, P_FE2CL_REP_PC_VENDOR_ITEM_BUY_FAIL);
         return;
     }
@@ -211,7 +243,10 @@ static void vendorTable(CNSocket* sock, CNPacketData* data) {
 
     INITSTRUCT(sP_FE2CL_REP_PC_VENDOR_TABLE_UPDATE_SUCC, resp);
 
+    int n = 0;
     for (int i = 0; i < (int)listings.size() && i < 20; i++) { // 20 is the max
+        if (listings[i].iID == 0)
+            continue;
         sItemBase base;
         base.iID = listings[i].iID;
         base.iOpt = 0;
@@ -222,9 +257,10 @@ static void vendorTable(CNSocket* sock, CNPacketData* data) {
         vItem.item = base;
         vItem.iSortNum = listings[i].sort;
         vItem.iVendorID = req->iVendorID;
-        //vItem.fBuyCost = listings[i].price; // this value is not actually the one that is used
+        //vItem.fBuyCost = listings[n].price; // this value is not actually the one that is used
 
-        resp.item[i] = vItem;
+        resp.item[n] = vItem;
+        n++;
     }
 
     sock->sendPacket(resp, P_FE2CL_REP_PC_VENDOR_TABLE_UPDATE_SUCC);

@@ -485,11 +485,8 @@ void Database::updatePlayer(Player *player, std::map<std::pair<int32_t, int32_t>
                     return;
                 }
                 sqlite3_reset(stmt);
-                std::cout << "Saved bank slot " << (i + AEQUIP_COUNT + AINVEN_COUNT + it->first.second * 200) << " for playerid " << player->iID << std::endl;
             }
-
-            std::cout << "Iteration is: " << it->first.first << " and " << it->first.second << std::endl;
-            it++;
+            it = banks->erase(it);
         } else {
             it++;
         }
@@ -626,7 +623,7 @@ void Database::getBank(Bank *bank, int id, int activeBank) {
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         int slot = sqlite3_column_int(stmt, 0);
 
-        if (slot < AEQUIP_COUNT + AINVEN_COUNT + activeBank * ABANK_COUNT || slot > AEQUIP_COUNT + AINVEN_COUNT + (activeBank + 1) * ABANK_COUNT)
+        if (slot < AEQUIP_COUNT + AINVEN_COUNT + activeBank * ABANK_COUNT || slot >= AEQUIP_COUNT + AINVEN_COUNT + (activeBank + 1) * ABANK_COUNT)
             continue;
 
         sItemBase* item;
@@ -636,10 +633,8 @@ void Database::getBank(Bank *bank, int id, int activeBank) {
         item->iID = sqlite3_column_int(stmt, 2);
         item->iOpt = sqlite3_column_int(stmt, 3);
         item->iTimeLimit = sqlite3_column_int(stmt, 4);
-        std::cout << "Loaded bank slot " << slot << " for playerid " << id << std::endl;
     }
 
-    std::cout << "SQL Finalizing address = " << &stmt << std::endl;
     sqlite3_finalize(stmt);
     std::cout << "Got bank for " << id << std::endl;
 }
