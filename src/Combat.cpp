@@ -641,30 +641,32 @@ static void grenadeFire(CNSocket* sock, CNPacketData* data) {
     sP_CL2FE_REQ_PC_GRENADE_STYLE_FIRE* grenade = (sP_CL2FE_REQ_PC_GRENADE_STYLE_FIRE*)data->buf;
     Player* plr = PlayerManager::getPlayer(sock);
 
-    time_t currTime = getTime();
-    int suspicion = plr->suspicionRating[1];
+    if (!settings::DISABLEANTICHEAT) {
+        time_t currTime = getTime();
+        int suspicion = plr->suspicionRating[1];
 
-    if (currTime - plr->lastShot < plr->fireRate * 80)
-        suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
-    else { 
-        if (currTime - plr->lastShot < plr->fireRate * 180 && suspicion > 0)
-            suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
-        if (suspicion > 5000) // lose suspicion in general when far in
-            suspicion -= 100;
-    }
+        if (currTime - plr->lastShot < plr->fireRate * 80)
+            suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
+        else {
+            if (currTime - plr->lastShot < plr->fireRate * 180 && suspicion > 0)
+                suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
+            if (suspicion > 5000) // lose suspicion in general when far in
+                suspicion -= 100;
+        }
 
-    plr->lastShot = currTime;
-    plr->lastActivity = currTime;
+        plr->lastShot = currTime;
+        plr->lastActivity = currTime;
 
-    if (suspicion > 0)
-        plr->suspicionRating[1] = suspicion;
-    else
-        plr->suspicionRating[1] = 0;
+        if (suspicion > 0)
+            plr->suspicionRating[1] = suspicion;
+        else
+            plr->suspicionRating[1] = 0;
 
-    if (plr->suspicionRating[1] > 15000) {
-        sock->kill();
-        CNShardServer::_killConnection(sock);
-        return;
+        if (plr->suspicionRating[1] > 15000) {
+            sock->kill();
+            CNShardServer::_killConnection(sock);
+            return;
+        }
     }
 
     INITSTRUCT(sP_FE2CL_REP_PC_GRENADE_STYLE_FIRE_SUCC, resp);
@@ -695,28 +697,30 @@ static void rocketFire(CNSocket* sock, CNPacketData* data) {
     sP_CL2FE_REQ_PC_ROCKET_STYLE_FIRE* rocket = (sP_CL2FE_REQ_PC_ROCKET_STYLE_FIRE*)data->buf;
     Player* plr = PlayerManager::getPlayer(sock);
 
-    time_t currTime = getTime();
-    int suspicion = plr->suspicionRating[1];
+    if (!settings::DISABLEANTICHEAT) {
+        time_t currTime = getTime();
+        int suspicion = plr->suspicionRating[1];
 
-    if (currTime - plr->lastShot < plr->fireRate * 80)
-        suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
-    else { 
-        if (currTime - plr->lastShot < plr->fireRate * 180 && suspicion > 0)
-            suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
-        if (suspicion > 5000) // lose suspicion in general when far in
-            suspicion -= 100;
+        if (currTime - plr->lastShot < plr->fireRate * 80)
+            suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
+        else {
+            if (currTime - plr->lastShot < plr->fireRate * 180 && suspicion > 0)
+                suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
+            if (suspicion > 5000) // lose suspicion in general when far in
+                suspicion -= 100;
+        }
+
+        plr->lastShot = currTime;
+        plr->lastActivity = currTime;
+
+        if (suspicion > 0)
+            plr->suspicionRating[1] = suspicion;
+        else
+            plr->suspicionRating[1] = 0;
+
+        if (plr->suspicionRating[1] > 15000)
+            return;
     }
-
-    plr->lastShot = currTime;
-    plr->lastActivity = currTime;
-
-    if (suspicion > 0)
-        plr->suspicionRating[1] = suspicion;
-    else
-        plr->suspicionRating[1] = 0;
-
-    if (plr->suspicionRating[1] > 15000)
-        return;
 
     // We should be sending back rocket succ packet, but it doesn't work, and this one works
     INITSTRUCT(sP_FE2CL_REP_PC_GRENADE_STYLE_FIRE_SUCC, resp);
