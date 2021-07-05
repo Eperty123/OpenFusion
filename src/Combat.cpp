@@ -57,39 +57,39 @@ static void pcAttackNpcs(CNSocket *sock, CNPacketData *data) {
     auto targets = (int32_t*)data->trailers;
     float penalty = 1.0f;
 
-    if (!settings::DISABLEANTICHEAT) {
-        // rapid fire anti-cheat
-        // TODO: move this out of here, when generalizing packet frequency validation
-        time_t currTime = getTime();
-        int suspicion = plr->suspicionRating[1];
+  //  if (!settings::DISABLEANTICHEAT) {
+  //      // rapid fire anti-cheat
+  //      // TODO: move this out of here, when generalizing packet frequency validation
+  //      time_t currTime = getTime();
+  //      int suspicion = plr->suspicionRating[1];
 
-        if (currTime - plr->lastShot < plr->fireRate * 80)
-            suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
-        else {
-            if (currTime - plr->lastShot < plr->fireRate * 180 && suspicion > 0)
-                suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
-            if (suspicion > 5000) // lose suspicion in general when far in
-                suspicion -= 100;
-        }
+  //      if (currTime - plr->lastShot < plr->fireRate * 80)
+  //          suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
+  //      else {
+  //          if (currTime - plr->lastShot < plr->fireRate * 180 && suspicion > 0)
+  //              suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
+  //          if (suspicion > 5000) // lose suspicion in general when far in
+  //              suspicion -= 100;
+  //      }
 
-		plr->lastShot = currTime;
-		plr->lastActivity = currTime;
+		//plr->lastShot = currTime;
+		//plr->lastActivity = currTime;
 
-        if (suspicion > 0)
-            plr->suspicionRating[1] = suspicion;
-        else
-            plr->suspicionRating[1] = 0;
+  //      if (suspicion > 0)
+  //          plr->suspicionRating[1] = suspicion;
+  //      else
+  //          plr->suspicionRating[1] = 0;
 
-        if (plr->suspicionRating[1] > 5000) {// penalize the player for possibly cheating
-            penalty -= (plr->suspicionRating[1] - 5000) * 0.0002f;
-            if (penalty < 0) penalty = 0;
-        }
+  //      if (plr->suspicionRating[1] > 5000) {// penalize the player for possibly cheating
+  //          penalty -= (plr->suspicionRating[1] - 5000) * 0.0002f;
+  //          if (penalty < 0) penalty = 0;
+  //      }
 
-		if (plr->suspicionRating[1] > 15000) { // too much, drop the player
-			sock->kill();
-			//CNShardServer::_killConnection(sock);
-			return;
-		}
+		//if (plr->suspicionRating[1] > 15000) { // too much, drop the player
+		//	sock->kill();
+		//	//CNShardServer::_killConnection(sock);
+		//	return;
+		//}
 
         /*
          * IMPORTANT: This validates memory safety in addition to preventing
@@ -97,11 +97,11 @@ static void pcAttackNpcs(CNSocket *sock, CNPacketData *data) {
          * values, it could overflow the *response* buffer, which isn't otherwise
          * being validated anymore.
          */
-        if (pkt->iNPCCnt > 3) {
-            std::cout << "[WARN] Player tried to attack more than 3 NPCs at once" << std::endl;
-            return;
-        }
-    }
+    //    if (pkt->iNPCCnt > 3) {
+    //        std::cout << "[WARN] Player tried to attack more than 3 NPCs at once" << std::endl;
+    //        return;
+    //    }
+    //}
 
     INITVARPACKET(respbuf, sP_FE2CL_PC_ATTACK_NPCs_SUCC, resp, sAttackResult, respdata);
 
@@ -183,10 +183,10 @@ void Combat::npcAttackPc(Mob *mob, time_t currTime) {
 
     INITVARPACKET(respbuf, sP_FE2CL_NPC_ATTACK_PCs, pkt, sAttackResult, atk);
 
-    int plrDef = plr->defense;
-    if (plr->suspicionRating[0] > 5000)
-        plrDef = plr->defense - (plr->suspicionRating[1] - 5000);
-    if (plrDef < 1) plrDef = 1;
+    //int plrDef = plr->defense;
+    //if (plr->suspicionRating[0] > 5000)
+    //    plrDef = plr->defense - (plr->suspicionRating[1] - 5000);
+    //if (plrDef < 1) plrDef = 1;
 
     auto damage = getDamage((int)mob->data["m_iPower"], plr->defense, 0, 1, -1, -1);
 
@@ -340,12 +340,14 @@ void Combat::killMob(CNSocket *sock, Mob *mob) {
 
                 Player *otherPlr = PlayerManager::getPlayer(sockTo);
 
-                if (mob->killedTime - otherPlr->lastActivity > 30000) // 30 seconds inactive, no drops for you.
-                    continue;
+                // Give drops to the members.
+                //if (mob->killedTime - otherPlr->lastActivity > 30000) // 30 seconds inactive, no drops for you.
+                //    continue;
 
                 // only contribute to group members' kills if they're close enough
                 int dist = std::hypot(plr->x - otherPlr->x + 1, plr->y - otherPlr->y + 1);
-                if (dist > 5000)
+                //if (dist > 5000)
+                if (dist > 10000)
                     continue;
 
                 Items::giveMobDrop(sockTo, mob, rolled, eventRolled);
@@ -410,7 +412,8 @@ static void combatEnd(CNSocket *sock, CNPacketData *data) {
     plr->inCombat = false;
     plr->healCooldown = 5000;
     plr->combos = 0;
-    if (plr->suspicionRating[1] > 5000) plr->suspicionRating[1] -= (plr->suspicionRating[1] - 5000) / 2;
+
+    //if (plr->suspicionRating[1] > 5000) plr->suspicionRating[1] -= (plr->suspicionRating[1] - 5000) / 2;
 }
 
 static void dotDamageOnOff(CNSocket *sock, CNPacketData *data) {
@@ -641,33 +644,33 @@ static void grenadeFire(CNSocket* sock, CNPacketData* data) {
     sP_CL2FE_REQ_PC_GRENADE_STYLE_FIRE* grenade = (sP_CL2FE_REQ_PC_GRENADE_STYLE_FIRE*)data->buf;
     Player* plr = PlayerManager::getPlayer(sock);
 
-    if (!settings::DISABLEANTICHEAT) {
-        time_t currTime = getTime();
-        int suspicion = plr->suspicionRating[1];
+    //if (!settings::DISABLEANTICHEAT) {
+    //    time_t currTime = getTime();
+    //    int suspicion = plr->suspicionRating[1];
 
-        if (currTime - plr->lastShot < plr->fireRate * 80)
-            suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
-        else {
-            if (currTime - plr->lastShot < plr->fireRate * 180 && suspicion > 0)
-                suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
-            if (suspicion > 5000) // lose suspicion in general when far in
-                suspicion -= 100;
-        }
+    //    if (currTime - plr->lastShot < plr->fireRate * 80)
+    //        suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
+    //    else {
+    //        if (currTime - plr->lastShot < plr->fireRate * 180 && suspicion > 0)
+    //            suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
+    //        if (suspicion > 5000) // lose suspicion in general when far in
+    //            suspicion -= 100;
+    //    }
 
-        plr->lastShot = currTime;
-        plr->lastActivity = currTime;
+    //    plr->lastShot = currTime;
+    //    plr->lastActivity = currTime;
 
-        if (suspicion > 0)
-            plr->suspicionRating[1] = suspicion;
-        else
-            plr->suspicionRating[1] = 0;
+    //    if (suspicion > 0)
+    //        plr->suspicionRating[1] = suspicion;
+    //    else
+    //        plr->suspicionRating[1] = 0;
 
-        if (plr->suspicionRating[1] > 15000) {
-            sock->kill();
-            CNShardServer::_killConnection(sock);
-            return;
-        }
-    }
+    //    if (plr->suspicionRating[1] > 15000) {
+    //        sock->kill();
+    //        CNShardServer::_killConnection(sock);
+    //        return;
+    //    }
+    //}
 
     INITSTRUCT(sP_FE2CL_REP_PC_GRENADE_STYLE_FIRE_SUCC, resp);
     resp.iToX = grenade->iToX;
@@ -697,30 +700,30 @@ static void rocketFire(CNSocket* sock, CNPacketData* data) {
     sP_CL2FE_REQ_PC_ROCKET_STYLE_FIRE* rocket = (sP_CL2FE_REQ_PC_ROCKET_STYLE_FIRE*)data->buf;
     Player* plr = PlayerManager::getPlayer(sock);
 
-    if (!settings::DISABLEANTICHEAT) {
-        time_t currTime = getTime();
-        int suspicion = plr->suspicionRating[1];
+    //if (!settings::DISABLEANTICHEAT) {
+    //    time_t currTime = getTime();
+    //    int suspicion = plr->suspicionRating[1];
 
-        if (currTime - plr->lastShot < plr->fireRate * 80)
-            suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
-        else {
-            if (currTime - plr->lastShot < plr->fireRate * 180 && suspicion > 0)
-                suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
-            if (suspicion > 5000) // lose suspicion in general when far in
-                suspicion -= 100;
-        }
+    //    if (currTime - plr->lastShot < plr->fireRate * 80)
+    //        suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
+    //    else {
+    //        if (currTime - plr->lastShot < plr->fireRate * 180 && suspicion > 0)
+    //            suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
+    //        if (suspicion > 5000) // lose suspicion in general when far in
+    //            suspicion -= 100;
+    //    }
 
-        plr->lastShot = currTime;
-        plr->lastActivity = currTime;
+    //    plr->lastShot = currTime;
+    //    plr->lastActivity = currTime;
 
-        if (suspicion > 0)
-            plr->suspicionRating[1] = suspicion;
-        else
-            plr->suspicionRating[1] = 0;
+    //    if (suspicion > 0)
+    //        plr->suspicionRating[1] = suspicion;
+    //    else
+    //        plr->suspicionRating[1] = 0;
 
-        if (plr->suspicionRating[1] > 15000)
-            return;
-    }
+    //    if (plr->suspicionRating[1] > 15000)
+    //        return;
+    //}
 
     // We should be sending back rocket succ packet, but it doesn't work, and this one works
     INITSTRUCT(sP_FE2CL_REP_PC_GRENADE_STYLE_FIRE_SUCC, resp);
@@ -780,10 +783,10 @@ static void projectileHit(CNSocket* sock, CNPacketData* data) {
 
     float penalty = 1.0f;
 
-    if (plr->suspicionRating[1] > 5000) {// penalize the player for possibly cheating
-        penalty -= (plr->suspicionRating[1] - 5000) * 0.0002f;
-        if (penalty < 0) penalty = 0;
-    }
+    //if (plr->suspicionRating[1] > 5000) {// penalize the player for possibly cheating
+    //    penalty -= (plr->suspicionRating[1] - 5000) * 0.0002f;
+    //    if (penalty < 0) penalty = 0;
+    //}
 
     /*
      * initialize response struct
@@ -916,10 +919,13 @@ static void playerTick(CNServer *serv, time_t currTime) {
             PlayerManager::sendToViewable(sock, (void*)&dead, P_FE2CL_PC_SUDDEN_DEAD, sizeof(sP_FE2CL_PC_SUDDEN_DEAD));
         }
 
-        if (plr->movements > 12)
-            plr->suspicionRating[0] += (plr->movements - 12) * 300;
-        else if (plr->movements > 0 && plr->suspicionRating[0] > 100)
-            plr->suspicionRating[0] -= 100;
+        //if (!settings::DISABLEANTICHEAT) {
+        //    if (plr->movements > 12)
+        //        plr->suspicionRating[0] += (plr->movements - 12) * 300;
+        //    else if (plr->movements > 0 && plr->suspicionRating[0] > 100)
+        //        plr->suspicionRating[0] -= 100;
+        //}
+        //else plr->suspicionRating[0] = 0;
         plr->movements = 0;
 
         if (transmit) {

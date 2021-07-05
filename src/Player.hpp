@@ -91,10 +91,6 @@ struct Player : public Entity {
     uint64_t iFirstUseFlag[2] = {};
     time_t lastHeartbeat = 0;
 
-    int16_t suspicionRating[2] = {};
-    time_t lastShot = 0;
-    time_t lastActivity = 0;
-
     std::vector<sItemBase> buyback = {};
 
     Player() { type = EntityType::PLAYER; }

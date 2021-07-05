@@ -116,5 +116,5 @@ void settings::init() {
     MONITORPORT = reader.GetInteger("monitor", "port", MONITORPORT);
     MONITORINTERVAL = reader.GetInteger("monitor", "interval", MONITORINTERVAL);
     DISABLEANTICHEAT = reader.GetBoolean("shard", "disableanticheat", DISABLEANTICHEAT);
-    DISABLEANTICHEAT = reader.GetBoolean("login", "usewebapi", USEWEBAPI);
+    USEWEBAPI = reader.GetBoolean("login", "usewebapi", USEWEBAPI);
 }
