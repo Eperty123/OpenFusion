@@ -32,7 +32,6 @@ namespace settings {
     extern int MONITORPORT;
     extern int MONITORINTERVAL;
     extern bool DISABLEFIRSTUSEFLAG;
-    extern bool DISABLEANTICHEAT;
     extern bool USEWEBAPI;
 
     void init();

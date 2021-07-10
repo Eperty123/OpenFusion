@@ -34,24 +34,6 @@ static void movePlayer(CNSocket* sock, CNPacketData* data) {
     if (plr->iConditionBitFlag & CSB_BIT_UP_MOVE_SPEED)
         speedLimit += 250;
 
-    //int suspicion = plr->suspicionRating[0];
-
-    //if (moveResponse.iSpeed > speedLimit)
-    //    suspicion += moveResponse.iSpeed - speedLimit + 500;
-
-    //if (!settings::DISABLEANTICHEAT) {
-    //    if (suspicion > 0)
-    //        plr->suspicionRating[0] = suspicion;
-    //    else
-    //        plr->suspicionRating[0] = 0;
-
-    //    if (plr->suspicionRating[0] > 15000) {
-    //        sock->kill();
-    //        //CNShardServer::_killConnection(sock);
-    //        return;
-    //    }
-    //}
-
     plr->movements += 1;
 
     // [gruntwork] check if player has a follower and move it

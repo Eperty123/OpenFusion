@@ -55,53 +55,6 @@ static void pcAttackNpcs(CNSocket *sock, CNPacketData *data) {
     auto pkt = (sP_CL2FE_REQ_PC_ATTACK_NPCs*)data->buf;
     Player *plr = PlayerManager::getPlayer(sock);
     auto targets = (int32_t*)data->trailers;
-    float penalty = 1.0f;
-
-  //  if (!settings::DISABLEANTICHEAT) {
-  //      // rapid fire anti-cheat
-  //      // TODO: move this out of here, when generalizing packet frequency validation
-  //      time_t currTime = getTime();
-  //      int suspicion = plr->suspicionRating[1];
-
-  //      if (currTime - plr->lastShot < plr->fireRate * 80)
-  //          suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
-  //      else {
-  //          if (currTime - plr->lastShot < plr->fireRate * 180 && suspicion > 0)
-  //              suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
-  //          if (suspicion > 5000) // lose suspicion in general when far in
-  //              suspicion -= 100;
-  //      }
-
-		//plr->lastShot = currTime;
-		//plr->lastActivity = currTime;
-
-  //      if (suspicion > 0)
-  //          plr->suspicionRating[1] = suspicion;
-  //      else
-  //          plr->suspicionRating[1] = 0;
-
-  //      if (plr->suspicionRating[1] > 5000) {// penalize the player for possibly cheating
-  //          penalty -= (plr->suspicionRating[1] - 5000) * 0.0002f;
-  //          if (penalty < 0) penalty = 0;
-  //      }
-
-		//if (plr->suspicionRating[1] > 15000) { // too much, drop the player
-		//	sock->kill();
-		//	//CNShardServer::_killConnection(sock);
-		//	return;
-		//}
-
-        /*
-         * IMPORTANT: This validates memory safety in addition to preventing
-         * ordinary cheating. If the client sends a very large number of trailing
-         * values, it could overflow the *response* buffer, which isn't otherwise
-         * being validated anymore.
-         */
-    //    if (pkt->iNPCCnt > 3) {
-    //        std::cout << "[WARN] Player tried to attack more than 3 NPCs at once" << std::endl;
-    //        return;
-    //    }
-    //}
 
     INITVARPACKET(respbuf, sP_FE2CL_PC_ATTACK_NPCs_SUCC, resp, sAttackResult, respdata);
 
@@ -154,7 +107,6 @@ static void pcAttackNpcs(CNSocket *sock, CNPacketData *data) {
         }
 
         damage = getDamage(damage.first, (int)mob->data["m_iProtection"], baseCrit, critPower, Nanos::nanoStyle(plr->activeNano), (int)mob->data["m_iNpcStyle"]);
-        damage.first *= penalty;
         damage.first = hitMob(sock, mob, damage.first);
 
         respdata[i].iID = mob->appearanceData.iNPC_ID;
@@ -644,34 +596,6 @@ static void grenadeFire(CNSocket* sock, CNPacketData* data) {
     sP_CL2FE_REQ_PC_GRENADE_STYLE_FIRE* grenade = (sP_CL2FE_REQ_PC_GRENADE_STYLE_FIRE*)data->buf;
     Player* plr = PlayerManager::getPlayer(sock);
 
-    //if (!settings::DISABLEANTICHEAT) {
-    //    time_t currTime = getTime();
-    //    int suspicion = plr->suspicionRating[1];
-
-    //    if (currTime - plr->lastShot < plr->fireRate * 80)
-    //        suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
-    //    else {
-    //        if (currTime - plr->lastShot < plr->fireRate * 180 && suspicion > 0)
-    //            suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
-    //        if (suspicion > 5000) // lose suspicion in general when far in
-    //            suspicion -= 100;
-    //    }
-
-    //    plr->lastShot = currTime;
-    //    plr->lastActivity = currTime;
-
-    //    if (suspicion > 0)
-    //        plr->suspicionRating[1] = suspicion;
-    //    else
-    //        plr->suspicionRating[1] = 0;
-
-    //    if (plr->suspicionRating[1] > 15000) {
-    //        sock->kill();
-    //        CNShardServer::_killConnection(sock);
-    //        return;
-    //    }
-    //}
-
     INITSTRUCT(sP_FE2CL_REP_PC_GRENADE_STYLE_FIRE_SUCC, resp);
     resp.iToX = grenade->iToX;
     resp.iToY = grenade->iToY;
@@ -699,31 +623,6 @@ static void grenadeFire(CNSocket* sock, CNPacketData* data) {
 static void rocketFire(CNSocket* sock, CNPacketData* data) {
     sP_CL2FE_REQ_PC_ROCKET_STYLE_FIRE* rocket = (sP_CL2FE_REQ_PC_ROCKET_STYLE_FIRE*)data->buf;
     Player* plr = PlayerManager::getPlayer(sock);
-
-    //if (!settings::DISABLEANTICHEAT) {
-    //    time_t currTime = getTime();
-    //    int suspicion = plr->suspicionRating[1];
-
-    //    if (currTime - plr->lastShot < plr->fireRate * 80)
-    //        suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // gain suspicion for rapid firing
-    //    else {
-    //        if (currTime - plr->lastShot < plr->fireRate * 180 && suspicion > 0)
-    //            suspicion += plr->fireRate * 100 + plr->lastShot - currTime; // lose suspicion for delayed firing
-    //        if (suspicion > 5000) // lose suspicion in general when far in
-    //            suspicion -= 100;
-    //    }
-
-    //    plr->lastShot = currTime;
-    //    plr->lastActivity = currTime;
-
-    //    if (suspicion > 0)
-    //        plr->suspicionRating[1] = suspicion;
-    //    else
-    //        plr->suspicionRating[1] = 0;
-
-    //    if (plr->suspicionRating[1] > 15000)
-    //        return;
-    //}
 
     // We should be sending back rocket succ packet, but it doesn't work, and this one works
     INITSTRUCT(sP_FE2CL_REP_PC_GRENADE_STYLE_FIRE_SUCC, resp);
@@ -919,13 +818,6 @@ static void playerTick(CNServer *serv, time_t currTime) {
             PlayerManager::sendToViewable(sock, (void*)&dead, P_FE2CL_PC_SUDDEN_DEAD, sizeof(sP_FE2CL_PC_SUDDEN_DEAD));
         }
 
-        //if (!settings::DISABLEANTICHEAT) {
-        //    if (plr->movements > 12)
-        //        plr->suspicionRating[0] += (plr->movements - 12) * 300;
-        //    else if (plr->movements > 0 && plr->suspicionRating[0] > 100)
-        //        plr->suspicionRating[0] -= 100;
-        //}
-        //else plr->suspicionRating[0] = 0;
         plr->movements = 0;
 
         if (transmit) {
