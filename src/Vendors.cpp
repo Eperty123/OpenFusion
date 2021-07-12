@@ -13,42 +13,27 @@ static void vendorBuy(CNSocket* sock, CNPacketData* data) {
     INITSTRUCT(sP_FE2CL_REP_PC_VENDOR_ITEM_BUY_FAIL, failResp);
     failResp.iErrorCode = 0;
 
+    if (req->iVendorID != req->iNPC_ID || Vendors::VendorTables.find(req->iVendorID) == Vendors::VendorTables.end()) {
+        std::cout << "[WARN] Vendor with ID " << req->iVendorID << " mismatched or not found (buy)" << std::endl;
+        sock->sendPacket(failResp, P_FE2CL_REP_PC_VENDOR_ITEM_BUY_FAIL);
+        return;
+    }
+
+    std::vector<VendorListing>* listings = &Vendors::VendorTables[req->iVendorID];
+    VendorListing reqItem;
+    reqItem.iID = req->Item.iID;
+    reqItem.type = req->Item.iType;
+    reqItem.sort = 0; // just to be safe
+
+    if (std::find(listings->begin(), listings->end(), reqItem) == listings->end()) { // item not found in listing
+        std::cout << "[WARN] Player " << PlayerManager::getPlayerName(plr) << " tried to buy an item that wasn't on sale" << std::endl;
+        sock->sendPacket(failResp, P_FE2CL_REP_PC_VENDOR_ITEM_BUY_FAIL);
+        return;
+    }
+
     Items::Item* itemDat = Items::getItemData(req->Item.iID, req->Item.iType);
-
-    if (req->Item.iID == 0 || itemDat == nullptr) {
+    if (itemDat == nullptr) {
         std::cout << "[WARN] Item id " << req->Item.iID << " with type " << req->Item.iType << " not found (buy)" << std::endl;
-        sock->sendPacket(failResp, P_FE2CL_REP_PC_VENDOR_ITEM_BUY_FAIL);
-        return;
-    }
-
-    if (NPCManager::NPCs.find(req->iNPC_ID) == NPCManager::NPCs.end()) {
-        std::cout << "[WARN] Vendor NPC not found" << std::endl;
-        sock->sendPacket(failResp, P_FE2CL_REP_PC_VENDOR_ITEM_BUY_FAIL);
-        return;
-    }
-
-    BaseNPC* npc = NPCManager::NPCs[req->iNPC_ID];
-    int vendor = npc->appearanceData.iNPCType;
-
-    if (Vendors::VendorTables.find(vendor) == Vendors::VendorTables.end()) {
-        std::cout << "[WARN] Player trying to buy from non-existent vendor." << std::endl;
-        sock->sendPacket(failResp, P_FE2CL_REP_PC_VENDOR_ITEM_BUY_FAIL);
-        return;
-    }
-
-    bool failed = true;
-    std::vector<VendorListing> listings = Vendors::VendorTables[vendor];
-
-    for (int i = 0; i < (int)listings.size() && i < 20; i++) { // 20 is the max
-        if (listings[i].iID == 0)
-            continue;
-
-        if (req->Item.iID == listings[i].iID && req->Item.iType == listings[i].type)
-            failed = false;
-    }
-
-    if (failed) {
-        std::cout << "[WARN] Player trying to buy an unsold item. PlayerID: " << plr->iID << std::endl;
         sock->sendPacket(failResp, P_FE2CL_REP_PC_VENDOR_ITEM_BUY_FAIL);
         return;
     }
@@ -239,7 +224,7 @@ static void vendorTable(CNSocket* sock, CNPacketData* data) {
         return;
 #endif
 
-    std::vector<VendorListing> listings = Vendors::VendorTables[req->iVendorID];
+    std::vector<VendorListing>& listings = Vendors::VendorTables[req->iVendorID];
 
     INITSTRUCT(sP_FE2CL_REP_PC_VENDOR_TABLE_UPDATE_SUCC, resp);
 

@@ -8,6 +8,10 @@
 
 struct VendorListing {
     int sort, type, iID;
+    // when validating a listing, we don't really care about the sorting index
+    bool operator==(const VendorListing& other) const {
+        return type == other.type && iID == other.iID;
+    }
 };
 
 namespace Vendors {
